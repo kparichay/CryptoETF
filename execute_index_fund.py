@@ -42,42 +42,58 @@ def main(args):
                       secret_key=bnb_keys["secret_key"])
     )
 
+    cmc_keys = getKeys(args.keys, "coinmarketcap")
+    if 'api_key' in cmc_keys and len(cmc_keys['api_key']) > 0:
+        cmc = CoinMarketCapClient(cmc_keys["api_key"])
+    else:
+        print('CoinMarketCap key not provided. ' \
+            'Default portfolios (Large, Mid, Small) will not be supported.')
+        cmc = None
+
+    def realizePortfolio(portfolio, amounts=None):
+        amount_set = False
+        if amounts != None:
+            amount_set = len(portfolio) == len(amounts)
+
+        currencies = []
+        updated_amounts = []
+        for idx, pf in enumerate(portfolio):
+            if cmc and hasattr(cmc, "get" + pf.title() + "Cap"):
+                new_portfolio = cmc.__getattribute__("get" + pf.title() + "Cap")()
+                currencies += new_portfolio
+                if amount_set:
+                    new_amount = [amounts[idx] / len(new_portfolio)] * len(new_portfolio)
+                    updated_amounts += new_amount
+            else:
+                currencies.append(pf)
+                if amount_set:
+                    updated_amounts.append(amounts[idx])
+
+        if amounts != None:
+            return currencies, updated_amounts
+        
+        return currencies
+
+    # Create arguments for the functions based on the passed args
     kwargs = {}
     kwargs["live_run"] = args.live_run
 
     kwargs['portfolio'] = None
-    if args.portfolio or args.custom_portfolio:
-        cmc_keys = getKeys(args.keys, "coinmarketcap")
-        cmc = CoinMarketCapClient(cmc_keys["api_key"])
-
-        portfolio = []
-        if isinstance(args.portfolio, list):
-            for pf in args.portfolio:
-                portfolio += cmc.__getattribute__("get" + pf.title() + "Cap")()
-
-        if args.custom_portfolio:
-            portfolio = args.custom_portfolio
-
-        kwargs['portfolio'] = portfolio
+    if args.portfolio:
+        kwargs['portfolio'] = realizePortfolio(args.portfolio)
+        if len(kwargs['portfolio']) == 0 and len(args.portfolio) > 0:
+            raise BaseException('Provided portfolio not supported with the given information'
+            'Considering providing other portfolios or giving exchange keys, if any')
+        if len(args.portfolio) < len(kwargs['portfolio']):
+            print('Some of the unsupported coins in portfolio have been removed.')
+            print('Target portfolio - ', kwargs['portfolio'])
+            input("Press any key to continue:")
 
     if args.weight:
         kwargs["weight"] = args.weight
 
     if args.source_portfolio:
-        kwargs["source_currencies"] = []
-        kwargs["source_amount"] = []
-        source_amount_set = len(args.source_portfolio) == len(args.source_amount)
-        for idx, pf in enumerate(args.source_portfolio):
-            if hasattr(cmc, "get" + pf.title() + "Cap"):
-                new_portfolio = cmc.__getattribute__("get" + pf.title() + "Cap")()
-                kwargs["source_currencies"] += new_portfolio
-                if source_amount_set:
-                    new_amount = [args.source_amount[idx] / len(new_portfolio)] * len(new_portfolio)
-                    kwargs["source_amount"] += new_amount
-            else:
-                kwargs["source_currencies"].append(pf)
-                if source_amount_set:
-                    kwargs["source_amount"].append(args.source_amount[idx])
+        kwargs["source_currencies"], kwargs["source_amount"] = realizePortfolio(args.source_portfolio, args.source_amount)
         if len(kwargs['source_amount']) == 0:
             del kwargs["source_amount"]
 
@@ -85,8 +101,8 @@ def main(args):
     if args.update_min_freq:
         raise BaseException("Update minimum frequency is not yet enabled")
 
-    kwargs["do_not_alter"] = args.do_not_alter
-    kwargs["not_invest_list"] = args.not_invest_list
+    kwargs["do_not_alter"] = realizePortfolio(args.do_not_alter)
+    kwargs["not_invest_list"] = realizePortfolio(args.not_invest_list)
 
     if DEBUG:
         print(args) 
@@ -141,8 +157,9 @@ if __name__ == "__main__":
         "--portfolio",
         nargs="+",
         choices=["small", "mid", "large"],
-        help="Choose the prebuilt portfolios to invest in. \
-        Large is top 20, medium is next 30, and small is next 100.",
+        help="Choose the prebuilt portfolios to invest in."
+        "Large is top 20, medium is next 30, and small is next 100."
+        "This also support directly specifying currencies as well.",
     )
     basic_group.add_argument(
         "--weight",
@@ -189,13 +206,6 @@ if __name__ == "__main__":
         default=[],
         help="Investment in these currencies shall not be done. \
         Already invested amount will be redeemed.",
-    )
-    pro_group.add_argument(
-        "--custom_portfolio",
-        nargs="+",
-        type=str,
-        help="Custom portfolio for invest. \
-        This argument is ignored for other actions.",
     )
 
     # TODO: Arguments for running this as a background script

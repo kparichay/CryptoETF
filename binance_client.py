@@ -35,7 +35,7 @@ class BinanceClient:
         self.client = Client(api_key, secret_key)
         self.system_status = self.client.get_system_status()
         if self.system_status["status"] != 0:
-            print("System status is {}, exiting...".format(
+            print("Error: System status is {}, exiting...".format(
                 self.system_status["msg"]))
             raise BaseException("System status is {}".format(
                 self.system_status["msg"]))
@@ -44,7 +44,7 @@ class BinanceClient:
         if (self.account_status["success"] != True
                 or self.account_status["msg"] != "Normal"):
             print(
-                "Account status is not normal or could not be retreived, exiting..."
+                "Error: Account status is not normal or could not be retreived, exiting..."
             )
             raise BaseException("Account status is not normal")
 
@@ -179,7 +179,7 @@ class BinanceClient:
         # if quant is below minimum tradeable quantity, then simply return
         if quant < self.__getMinNotional(pair):
             print(
-                "  Quantity less than minimum notional quantity, skipping...")
+                "Warn: Quantity less than minimum notional quantity, skipping...")
             return 0.0
 
         # Convert quant from base to target
@@ -190,7 +190,7 @@ class BinanceClient:
         # if quant is below minimum tradeable quantity, then simply return
         if quant < self.__getMinQuantity(pair):
             print(
-                "  Quantity less than minimum tradeable quantity, skipping...")
+                "Warn: Quantity less than minimum tradeable quantity, skipping...")
             return 0.0
 
         # ensure that quantity follow stepsize granularity
@@ -278,7 +278,7 @@ class BinanceClient:
             if found:
                 supported_portfolio.append((symbol, amount))
             else:
-                print('Symbol ', symbol, ' not supported by the exchange')
+                print('Warn: Symbol ', symbol, ' not supported by the exchange')
 
         return supported_portfolio
 

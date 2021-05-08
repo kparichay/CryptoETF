@@ -86,6 +86,7 @@ class IndexFund:
                           live_run=False):
 
         # update target_portfolio based on available symbols on the exchange
+        orig_target_portfolio = target_portfolio
         target_portfolio = self.exchange.getSupportedPortfolio(target_portfolio)
 
         # Update the portfolio
@@ -94,6 +95,10 @@ class IndexFund:
         print("##################################################")
         print("Target Portfolio -> \n", target_portfolio)
         print("##################################################")
+
+        if target_portfolio != orig_target_portfolio:
+            print('Target portfolio has been updated given the exchange supported currencies')
+            input("Press any key to continue:")
 
         current_symbols = [x[0] for x in current_portfolio]
         target_symbols = [x[0] for x in target_portfolio]
