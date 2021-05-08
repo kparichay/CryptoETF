@@ -1,0 +1,8 @@
+# Please fill the keys below
+[binance]
+api_key = 
+secret_key = 
+
+# Please fill the keys below
+[coinmarketcap]
+api_key = xxyyzz
