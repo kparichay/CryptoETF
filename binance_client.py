@@ -8,19 +8,11 @@
 # @bug    No known bugs except for NYI items
 # @brief  Client for the Binance exchange
 
-from binance.client import Client
 import time
+from collections import defaultdict
 from decimal import Decimal, ROUND_DOWN
 
-base_currencies = ["USDT", "BTC", "BNB"]  # base currencies with the most pairs
-blacklist_currencies = [
-    "EON",
-    "ADD",
-    "MEETONE",
-    "ATD",
-    "EOP",
-    "CBM",
-]  # binance does not give their price
+from binance.client import Client
 
 MAX_TRY_TILL_FAIL = 120  # sec
 MAX_WAIT_BW_TRIES = 10  # sec
@@ -59,19 +51,39 @@ class BinanceClient:
         self.info = self.client.get_account()
         self.all_pairs = dict([(x["symbol"], float(x["price"]))
                                for x in self.client.get_all_tickers()])
+        self.all_pairs_info = self.client.get_exchange_info()
+        self.__updateBalance()
 
-    def __updateBalance(self):
+        base_symbols_count = defaultdict(int)
+        for sym in self.all_symbols:
+            for pair in self.all_pairs:
+                if pair.endswith(sym):
+                    base_symbols_count[sym] += 1
+
+        self.base_symbols = sorted(base_symbols_count.items(), key=lambda x: x[1], reverse=True)
+        # base symbols are sorted by the number of pairs they form
+        self.base_symbols = [x[0] for x in self.base_symbols]
+        # top 5 are sufficient, lower ones can also work but might have low volume
+        # and this will result in higher spread leading to heavy cost of market transaction
+        self.base_symbols = self.base_symbols[:5]
+
+    def __updateBalance(self, cached=True):
+        if hasattr(self, "balance") and cached:
+            return
+
         self.full_balance = self.info["balances"]
         self.all_symbols = [x["asset"] for x in self.full_balance]
-        self.def_balance = list(
+        # balance must be more than 0
+        self.balance = list(
             filter(
-                lambda x: float(x["free"]) > 0 and x["asset"] not in
-                blacklist_currencies,
+                lambda x: float(x["free"]) > 0,
                 self.full_balance,
             ))
+        # all symbols in balance must be tradeable
+        self.balance = list(filter(lambda x: len([y for y in self.all_pairs if y.startswith(x['asset'])]) > 0, self.balance))
 
     def __getNumPairsWithBaseCurrencies(self):
-        for base in base_currencies:
+        for base in self.base_symbols:
             print(
                 "base = ",
                 base,
@@ -92,15 +104,15 @@ class BinanceClient:
 
         raise BaseException("pair not found")
 
-    def __getPriceWrt(self, symbol, base="USDT"):
-        if base not in base_currencies:
+    def __getPriceWrt(self, symbol, base):
+        if base not in self.base_symbols:
             raise BaseException("base currency not found")
         if symbol not in self.all_symbols:
             raise BaseException("symbol not found")
 
         price_wrt_base = None
         price_base = None
-        for base_cur in [base] + base_currencies:
+        for base_cur in [base] + self.base_symbols:
             try:
                 price_wrt_base = self.__getPairPrice(symbol, base_cur)
                 price_base = base_cur
@@ -113,12 +125,18 @@ class BinanceClient:
         else:
             return price_wrt_base * self.__getPairPrice(price_base, base)
 
-    def getBalanceUsd(self, cached=True, ignore_small_amounts=20):
-        if hasattr(self, "balance_usd") and cached:
-            return self.balance_usd
+    def getPairPrice(self, symbol, base):
+        if symbol == base:
+            return 1.
+        else:
+            return self.__getPriceWrt(symbol, base)
 
-        self.__updateBalance()
-        balance_usd = self.getPortfolioUsd([(b['asset'], b['free']) for b in self.def_balance])
+    def getUsdSymbol(self):
+        return 'USDT'
+
+    def getBalanceUsd(self, cached=True, ignore_small_amounts=20):
+        self.__updateBalance(cached=cached)
+        balance_usd = self.getPortfolioUsd([(b['asset'], b['free']) for b in self.balance])
 
         self.balance_usd = sorted(balance_usd,
                                   key=lambda x: x[1],
@@ -128,11 +146,11 @@ class BinanceClient:
         return self.balance_usd
 
     def getPortfolioUsd(self, portfolio):
-        portfolio = [(x[0], float(x[1]) * self.__getPriceWrt(x[0], base="USDT")) for x in portfolio]
+        portfolio = [(x[0], float(x[1]) * self.__getPriceWrt(x[0], base=self.getUsdSymbol())) for x in portfolio]
         return portfolio
 
     def __getPairLotInfo(self, pair, key, filter_type):
-        pair_info = self.client.get_symbol_info(pair)
+        pair_info = list(filter(lambda x : x['symbol'] == pair, self.all_pairs_info['symbols']))[0]
         min_info = list(
             filter(lambda x: x["filterType"] == filter_type,
                    pair_info["filters"]))
@@ -151,6 +169,7 @@ class BinanceClient:
 
     def __placeOrder(self, symbol, base, side, quant, live_run):
         pair = symbol + base
+        pair_str = symbol + '/' + base
         if pair not in self.all_pairs:
             raise BaseException('Pair to trade is not available on the exchange')
 
@@ -182,7 +201,7 @@ class BinanceClient:
             Decimal(base_quant).quantize(Decimal(step_size), rounding=ROUND_DOWN))
 
         print(" pair = {}, side = {}, base quant = {}, quant = {}".format(
-            pair, side, base_quant, quant))
+            pair_str, side, base_quant, quant))
 
         if live_run:
             order = self.client.create_order(symbol=pair,
@@ -227,20 +246,46 @@ class BinanceClient:
                                  live_run=live_run)
 
     def findBaseCurrency(self, portfolio):
-        for base_currency in base_currencies:
-            print(list(
-                        filter(
-                            lambda x: x[0] + base_currency not in self.
-                            all_pairs and x[0] != base_currency,
-                            portfolio,
-                        )))
-            if (len(
-                    list(
-                        filter(
-                            lambda x: x[0] + base_currency not in self.
-                            all_pairs and x[0] != base_currency,
-                            portfolio,
-                        ))) == 0):
-                return base_currency
+        portfolio = [x[0] for x in portfolio]
+        min_num_missing_currencies = len(portfolio)
+        best_base_currency = None
 
-        raise BaseException("Cant find base currency for the portfolio")
+        for base_currency in self.base_symbols:
+            num_missing_currencies = len(list(filter(
+                            lambda x: x + base_currency not in self.
+                            all_pairs and x != base_currency,
+                            portfolio)))
+
+            if num_missing_currencies < min_num_missing_currencies:
+                min_num_missing_currencies = num_missing_currencies
+                best_base_currency = base_currency
+
+        missing_currencies = list(filter(
+                            lambda x: x + best_base_currency not in self.
+                            all_pairs and x != best_base_currency,
+                            portfolio))
+        
+        return best_base_currency, missing_currencies
+
+    def getSupportedPortfolio(self, portfolio):
+        supported_portfolio = []
+        for symbol, amount in portfolio:
+            found = False
+            for base_currency in self.base_symbols:
+                if symbol + base_currency in self.all_pairs:
+                    found = True
+                    break
+            if found:
+                supported_portfolio.append((symbol, amount))
+            else:
+                print('Symbol ', symbol, ' not supported by the exchange')
+
+        return supported_portfolio
+
+    def __getAllLeveragedCurrencies(self, direction):
+        ups = [x.split(direction)[0] for x in self.all_pairs if direction in x and ''.join(x.split(direction)) in self.all_pairs]
+
+    def getAllLeveragedCurrencies(self):
+        ups = self.__getAllLeveragedCurrencies('UP')
+        downs = self.__getAllLeveragedCurrencies('DOWN')
+        return list(set(ups) & set(downs))

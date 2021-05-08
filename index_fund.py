@@ -22,7 +22,6 @@ def getTimeSec():
 class IndexFund:
     """
     Index Fund to manage and execute a given portfolio
-    TODO: add support for multiple base currencies
     """
 
     def __init__(self, exchange_client):
@@ -43,24 +42,51 @@ class IndexFund:
         return self.exchange.getBalanceUsd(
             cached=cached, ignore_small_amounts=ignore_small_amounts)
 
-    def __tradePortfolio(self, portfolio, base_currency, tradeFunc, live_run):
-        return sum([
-            tradeFunc(symbol, base_currency, quant, live_run)
-            for symbol, quant in portfolio
-        ])
+    def __executeTrades(self, trades, tradeFunc, live_run):
+        self_trades = list(filter(lambda x: x[0][0] == x[0][1], trades))
+        non_self_trades = list(filter(lambda x: x[0][0] != x[0][1], trades))
+        self_trades_amount = sum([quant for symbol, quant in non_self_trades])
+        non_self_trades_amount = sum([tradeFunc(symbol[0], symbol[1], quant, live_run)
+            for symbol, quant in non_self_trades])
+        return self_trades_amount + non_self_trades_amount
+            
 
-    def __liquidatePortfolio(self, portfolio, base_currency, live_run):
-        return self.__tradePortfolio(portfolio, base_currency,
+    def __liquidateTrades(self, trades, live_run):
+        return self.__executeTrades(trades,
                                      self.exchange.sellOrder, live_run)
 
-    def __investPortfolio(self, portfolio, base_currency, live_run):
-        return self.__tradePortfolio(portfolio, base_currency,
+    def __investTrades(self, trades, live_run):
+        return self.__executeTrades(trades,
                                      self.exchange.buyOrder, live_run)
+
+    def __createTrades(self, liquidate_portfolio, invest_portfolio):
+        ## TODO: create a graph setup that would find on with multiple base currencies for trading
+        base_currency, missing_currencies = self.exchange.findBaseCurrency(liquidate_portfolio +
+                                                       invest_portfolio)
+
+        print('Coins ', missing_currencies, ' will not be traded due to limited trade pairs availability')
+        # Reduced amount available for liquidity/invest will be handled later by accounting the exact amount liquidated
+        liquidate_portfolio = [x for x in liquidate_portfolio if x[0] not in missing_currencies]
+        invest_portfolio = [x for x in invest_portfolio if x[0] not in missing_currencies]
+
+        base_price = self.exchange.getPairPrice(base_currency, self.exchange.getUsdSymbol())
+
+        def portfolio_to_trades(portfolio):
+            return [((x[0], base_currency), x[1]/base_price) for x in portfolio]
+
+        liquidate_trades = portfolio_to_trades(liquidate_portfolio)
+        invest_trades = portfolio_to_trades(invest_portfolio)
+
+        return liquidate_trades, invest_trades
+
 
     def __updatePortfolio(self,
                           target_portfolio,
                           current_portfolio,
                           live_run=False):
+
+        # update target_portfolio based on available symbols on the exchange
+        target_portfolio = self.exchange.getSupportedPortfolio(target_portfolio)
 
         # Update the portfolio
         print("##################################################")
@@ -101,40 +127,23 @@ class IndexFund:
         ]
         invest_portfolio = list(filter(lambda x: x[1] > 0, diff_portfolio))
 
+        # convert portfolio to trades
+        liquidate_trades, invest_trades = self.__createTrades(liquidate_portfolio, invest_portfolio)
+
         # execute the trades
-        base_currency = self.exchange.findBaseCurrency(liquidate_portfolio +
-                                                       invest_portfolio)
-
-        # filter out trades of base_currency itself
-        base_current_trades = list(
-            filter(lambda x: x[0] == base_currency, liquidate_portfolio))
-        liquid_base_currency_amount = 0.0
-        if len(base_current_trades) > 0:
-            liquid_base_currency_amount += list(
-                filter(lambda x: x[0] == base_currency,
-                       liquidate_portfolio))[0][1]
-
-        liquidate_portfolio = list(
-            filter(lambda x: x[0] != base_currency, liquidate_portfolio))
-        invest_portfolio = list(
-            filter(lambda x: x[0] != base_currency, invest_portfolio))
-
         if live_run:
             print("Executing Trades (LIVE) -> ")
         else:
             print("Executing Trades (NOT LIVE) -> ")
 
-        liquidated_amount = self.__liquidatePortfolio(
-            liquidate_portfolio, base_currency, live_run)
-        liquidated_amount += liquid_base_currency_amount
+        liquidated_amount = self.__liquidateTrades(liquidate_trades, live_run)
 
         # scale down the invest portfolio by the amount which has been aggregated by the sales
-        amount_required = sum([x[1] for x in invest_portfolio])
-        invest_portfolio = [(x[0],
-                                x[1] / amount_required * liquidated_amount)
-                            for x in invest_portfolio]
+        amount_required = sum([x[1] for x in invest_trades])
+        invest_trades = [(x[0], x[1] / amount_required * liquidated_amount)
+                            for x in invest_trades]
 
-        self.__investPortfolio(invest_portfolio, base_currency, live_run)
+        self.__investTrades(invest_trades, live_run)
         print("##################################################")
 
         if not live_run:
