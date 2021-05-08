@@ -282,10 +282,30 @@ class BinanceClient:
 
         return supported_portfolio
 
-    def __getAllLeveragedCurrencies(self, direction):
-        ups = [x.split(direction)[0] for x in self.all_pairs if direction in x and ''.join(x.split(direction)) in self.all_pairs]
+    def __getLeveragedCurrencies(self, direction):
+        return [x.split(direction)[0] for x in self.all_pairs if direction in x and ''.join(x.split(direction)) in self.all_pairs]
 
-    def getAllLeveragedCurrencies(self):
-        ups = self.__getAllLeveragedCurrencies('UP')
-        downs = self.__getAllLeveragedCurrencies('DOWN')
-        return list(set(ups) & set(downs))
+    def getLeveragedCurrencies(self):
+        if hasattr(self, 'all_leveraged_symbols'):
+            return self.all_leveraged_symbols
+
+        ups = self.__getLeveragedCurrencies('UP')
+        downs = self.__getLeveragedCurrencies('DOWN')
+        self.all_leveraged_symbols = list(set(ups) & set(downs))
+
+        return self.all_leveraged_symbols
+
+    def __getLeveragedSymbol(self, symbol, side):
+        if symbol not in self.all_symbols:
+            raise BaseException('Given symbol ', symbol, ' not supported')
+
+        if symbol not in self.getLeveragedCurrencies():
+            raise BaseException('Given symbol ', symbol, ' cannot be leveraged.')
+
+        return symbol + side
+        
+    def getBullSymbol(self, symbol):
+        return self.__getLeveragedSymbol(symbol, side='UP')
+
+    def getBearSymbol(self, symbol):
+        return self.__getLeveragedSymbol(symbol, side='DOWN')

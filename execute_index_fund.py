@@ -46,7 +46,7 @@ def main(args):
     if 'api_key' in cmc_keys and len(cmc_keys['api_key']) > 0:
         cmc = CoinMarketCapClient(cmc_keys["api_key"])
     else:
-        print('CoinMarketCap key not provided. ' \
+        print('Warn: CoinMarketCap key not provided. ' \
             'Default portfolios (Large, Mid, Small) will not be supported.')
         cmc = None
 
@@ -113,6 +113,10 @@ def main(args):
         fund.reinvest(**kwargs)
     elif args.rebalance:
         fund.rebalance(**kwargs)
+    elif args.leverage_bull:
+        fund.leverage(mode='bull', **kwargs)
+    elif args.leverage_bear:
+        fund.leverage(mode='bear', **kwargs)
 
 
 if __name__ == "__main__":
@@ -134,6 +138,18 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Rebalance the portfoilio.",
+    )
+    exclusive_group.add_argument(
+        "--leverage_bull",
+        action="store_true",
+        default=False,
+        help="Convert the portfolio to its leveraged bull coins where ever possible.",
+    )
+    exclusive_group.add_argument(
+        "--leverage_bear",
+        action="store_true",
+        default=False,
+        help="Convert the portfolio to its leveraged bear coins where ever possible.",
     )
 
     # Arguments for the regular users
@@ -229,12 +245,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.live_run:
-        print("This is a live run and real trades will take place.")
+        print("Warn: This is a live run and real trades will take place. ")
         input("Press any key to continue:")
     else:
-        print(
-            "This is a dry run and no real trades will take place. Use --live_run to make actual trades."
-        )
+        print("Warn: This is a dry run and no real trades will take place. "
+        "Use --live_run to make actual trades.")
 
     try:
         main(args)

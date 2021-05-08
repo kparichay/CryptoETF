@@ -64,7 +64,9 @@ class IndexFund:
         base_currency, missing_currencies = self.exchange.findBaseCurrency(liquidate_portfolio +
                                                        invest_portfolio)
 
-        print('Coins ', missing_currencies, ' will not be traded due to limited trade pairs availability')
+        if len(missing_currencies) > 0:
+            print('Warn: Coins ', missing_currencies, ' will not be traded due to limited trade pairs availability')
+
         # Reduced amount available for liquidity/invest will be handled later by accounting the exact amount liquidated
         liquidate_portfolio = [x for x in liquidate_portfolio if x[0] not in missing_currencies]
         invest_portfolio = [x for x in invest_portfolio if x[0] not in missing_currencies]
@@ -171,8 +173,6 @@ class IndexFund:
         if portfolio is None or len(portfolio) == 0:
             if len(source_currencies) != 0:
                 portfolio = source_currencies
-                if len(source_amount) == len(source_currencies):
-                    portfolio = self.exchange.getPortfolioUsd(list(zip(source_currencies, source_amount)))
             else:
                 portfolio = self.getCurrentPortfolio()
 
@@ -304,3 +304,51 @@ class IndexFund:
             target_portfolio=target_portfolio,
             current_portfolio=current_portfolio,
             live_run=live_run)
+
+    def leverage(self,
+        mode,   # can be bear or bull 
+        portfolio,
+        source_currencies=[],
+        source_amount=[],
+        not_invest_list=[],
+        do_not_alter=[],
+        weight=None,
+        live_run=False):
+
+        # if portfolio not provided, use full current portfolio
+        if portfolio is not None or (portfolio and len(portfolio) > 0):
+            raise BaseException('Portfolio not accepted with bear/bull options.')
+
+        if len(source_currencies) != 0:
+            portfolio = source_currencies
+        else:
+            portfolio = self.getCurrentPortfolio()
+
+        leveraged_currencies = self.exchange.getLeveragedCurrencies()
+        portfolio = [x for x in portfolio if x in leveraged_currencies]
+
+        if mode == 'bull':
+            leveraged_portfolio = [self.exchange.getBullSymbol(x) for x in portfolio]
+        elif mode == 'bear':
+            leveraged_portfolio = [self.exchange.getBearSymbol(x) for x in portfolio]
+        else:
+            raise BaseException('Unsupported mode for leverage.')
+
+        if len(not_invest_list) > 0 or len(do_not_alter) > 0:
+            raise BaseException('not_invest_list or do_not_alter not supported in leveraging.')
+
+        leveraged_source_amounts = []
+        if len(source_currencies) != 0 and len(source_currencies) == len(source_amount):
+            zipped_source = list(zip(source_currencies, source_amount))
+            for sym in portfolio:
+                leveraged_source_amounts.append(list(filter(lambda x: x[0] == sym, zipped_source))[0][1])
+
+        return self.reinvest(
+            portfolio=leveraged_portfolio,
+            source_currencies=portfolio,
+            source_amount=source_amount,
+            not_invest_list=not_invest_list,
+            do_not_alter=do_not_alter,
+            weight=None,
+            live_run=live_run,
+        )
