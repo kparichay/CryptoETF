@@ -128,6 +128,8 @@ if __name__ == "__main__":
     # Primary action to the portfolio
     # title='Primary Action', description='Choose one of the below primary action',
     exclusive_group = parser.add_mutually_exclusive_group(required=True)
+    ## TODO: ensure that liquidate happens to USDT only than a selected base currency
+    ## If this isnt possible, give option to user
     exclusive_group.add_argument(
         "--liquidate",
         action="store_true",
