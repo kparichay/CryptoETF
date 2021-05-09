@@ -17,7 +17,7 @@ from binance.client import Client
 MAX_TRY_TILL_FAIL = 120  # sec
 MAX_WAIT_BW_TRIES = 10  # sec
 
-FEE = 0.1 * 0.01  # fee in fraction
+DEFAULT_FEE = 0.1 * 0.01  # fee in fraction
 
 
 def getTimeSec():
@@ -31,7 +31,6 @@ class BinanceClient:
     """
     Client for Binance exchange
     TODO: add support for marginal account
-    FIXME: this returns a very delayed balance. use WS with Payload: Account Update
     """
 
     def __init__(self, api_key, secret_key):
@@ -44,8 +43,7 @@ class BinanceClient:
                 self.system_status["msg"]))
 
         self.account_status = self.client.get_account_status()
-        if (self.account_status["success"] != True
-                or self.account_status["msg"] != "Normal"):
+        if (self.account_status["data"] != "Normal"):
             print(
                 "Error: Account status is not normal or could not be retreived, exiting..."
             )
@@ -69,6 +67,13 @@ class BinanceClient:
         # top 5 are sufficient, lower ones can also work but might have low volume
         # and this will result in higher spread leading to heavy cost of market transaction
         self.base_symbols = self.base_symbols[:5]
+
+        trade_fees = self.client.get_trade_fee()
+        self.fees = dict([(x['symbol'], float(x['makerCommission'])) for x in trade_fees])
+        # binance API gives 0 fee for some scenarios but its not zero
+        for sym in self.fees:
+            if self.fees[sym] == 0:
+                self.fees[sym] = DEFAULT_FEE
 
     def __updateBalance(self, cached=True):
         if hasattr(self, "balance") and cached:
@@ -177,7 +182,7 @@ class BinanceClient:
             raise BaseException('Pair to trade is not available on the exchange')
 
         # reduce the quant by fee to avoid not enough balance issues
-        quant *= 1 - FEE
+        quant *= 1 - self.fees[pair]
 
         # if quant is below minimum tradeable quantity, then simply return
         if quant < self.__getMinNotional(pair):
@@ -228,7 +233,7 @@ class BinanceClient:
             traded_quant = 0
             for fill in order["fills"]:
                 traded_quant += float(fill["price"]) * float(
-                    fill["qty"]) * (1 - FEE)
+                    fill["qty"]) * (1 - self.fees[pair])
 
             return traded_quant
         else:

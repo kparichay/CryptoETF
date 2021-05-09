@@ -1,2 +1,2 @@
-python-binance==0.7.11
+python-binance==1.0.7
 python-coinmarketcap==0.2

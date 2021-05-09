@@ -72,15 +72,15 @@ def main(args):
         if amounts != None:
             return currencies, updated_amounts
         
-        return currencies
+        return currencies, None
 
     # Create arguments for the functions based on the passed args
     kwargs = {}
-    kwargs["live_run"] = args.live_run
+    kwargs["live_run"] = args.live
 
     kwargs['portfolio'] = None
     if args.portfolio:
-        kwargs['portfolio'] = realizePortfolio(args.portfolio)
+        kwargs['portfolio'], _ = realizePortfolio(args.portfolio)
         if len(kwargs['portfolio']) == 0 and len(args.portfolio) > 0:
             raise BaseException('Provided portfolio not supported with the given information'
             'Considering providing other portfolios or giving exchange keys, if any')
@@ -94,7 +94,7 @@ def main(args):
 
     if args.source_portfolio:
         kwargs["source_currencies"], kwargs["source_amount"] = realizePortfolio(args.source_portfolio, args.source_amount)
-        if len(kwargs['source_amount']) == 0:
+        if kwargs['source_amount'] == None or len(kwargs['source_amount']) == 0:
             del kwargs["source_amount"]
         if 'source_amount' in kwargs and len(kwargs['source_currencies']) != len(kwargs['source_amount']):
             raise BaseException('source_amount and source_currencies length mismatch')
@@ -103,8 +103,8 @@ def main(args):
     if args.update_min_freq:
         raise BaseException("Update minimum frequency is not yet enabled")
 
-    kwargs["do_not_alter"] = realizePortfolio(args.do_not_alter)
-    kwargs["not_invest_list"] = realizePortfolio(args.not_invest_list)
+    kwargs["do_not_alter"], _ = realizePortfolio(args.do_not_alter)
+    kwargs["not_invest_list"], _ = realizePortfolio(args.not_invest_list)
 
     if DEBUG:
         print(args) 
@@ -174,7 +174,7 @@ if __name__ == "__main__":
                                  Check keys.sample to create one for yourself.",
     )
     basic_group.add_argument(
-        "--live_run",
+        "--live",
         action="store_true",
         default=False,
         help="Do a live-run where real trades takes place.",
@@ -255,12 +255,12 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    if args.live_run:
+    if args.live:
         print("Warn: This is a live run and real trades will take place. ")
         input("Press any key to continue:")
     else:
         print("Warn: This is a dry run and no real trades will take place. "
-        "Use --live_run to make actual trades.")
+        "Use --live to make actual trades.")
 
     try:
         main(args)

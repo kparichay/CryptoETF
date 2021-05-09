@@ -157,10 +157,18 @@ class IndexFund:
         print("##################################################")
 
         if not live_run:
-            return target_portfolio
+            updated_portfolio = target_portfolio
+        else:
+            # Return the updated portfolio
+            updated_portfolio = self.getCurrentPortfolio(cached=False)
+            target_symbols = [x[0] for x in target_portfolio]
+            updated_portfolio = [x for x in updated_portfolio if x[0] in target_symbols]
 
-        # Return the updated portfolio
-        return self.getCurrentPortfolio(cached=False)
+        print("Updated Portfolio -> \n", updated_portfolio)
+        print("##################################################")
+        print('NOTE: Uupdated Portfolio can be outdated for live mode due to limitation of the exchange API.')
+
+        return updated_portfolio
 
     def __createPortfolioFromSource(self, source_currencies, source_amount):
         current_portfolio = self.getCurrentPortfolio()
