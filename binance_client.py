@@ -23,6 +23,9 @@ FEE = 0.1 * 0.01  # fee in fraction
 def getTimeSec():
     return round(time.time() * 1000 * 1000)
 
+BULL = 'UP'
+BEAR = 'DOWN'
+
 
 class BinanceClient:
     """
@@ -179,7 +182,7 @@ class BinanceClient:
         # if quant is below minimum tradeable quantity, then simply return
         if quant < self.__getMinNotional(pair):
             print(
-                "Warn: Quantity less than minimum notional quantity, skipping...")
+                "Warn: {} quantity less than minimum notional quantity, skipping...".format(pair_str))
             return 0.0
 
         # Convert quant from base to target
@@ -190,7 +193,7 @@ class BinanceClient:
         # if quant is below minimum tradeable quantity, then simply return
         if quant < self.__getMinQuantity(pair):
             print(
-                "Warn: Quantity less than minimum tradeable quantity, skipping...")
+                "Warn: {} quantity less than minimum tradeable quantity, skipping...".format(pair_str))
             return 0.0
 
         # ensure that quantity follow stepsize granularity
@@ -289,8 +292,8 @@ class BinanceClient:
         if hasattr(self, 'all_leveraged_symbols'):
             return self.all_leveraged_symbols
 
-        ups = self.__getLeveragedCurrencies('UP')
-        downs = self.__getLeveragedCurrencies('DOWN')
+        ups = self.__getLeveragedCurrencies(BULL)
+        downs = self.__getLeveragedCurrencies(BEAR)
         self.all_leveraged_symbols = list(set(ups) & set(downs))
 
         return self.all_leveraged_symbols
@@ -305,7 +308,15 @@ class BinanceClient:
         return symbol + side
         
     def getBullSymbol(self, symbol):
-        return self.__getLeveragedSymbol(symbol, side='UP')
+        return self.__getLeveragedSymbol(symbol, side=BULL)
 
     def getBearSymbol(self, symbol):
-        return self.__getLeveragedSymbol(symbol, side='DOWN')
+        return self.__getLeveragedSymbol(symbol, side=BEAR)
+
+    def getDeleveragizedSymbol(self, symbol):
+        if symbol.endswith(BULL):
+            return symbol[:-len(BULL)]
+        elif symbol.endswith(BEAR):
+            return symbol[:-len(BEAR)]
+        else:
+            return symbol

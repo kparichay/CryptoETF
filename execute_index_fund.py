@@ -96,6 +96,8 @@ def main(args):
         kwargs["source_currencies"], kwargs["source_amount"] = realizePortfolio(args.source_portfolio, args.source_amount)
         if len(kwargs['source_amount']) == 0:
             del kwargs["source_amount"]
+        if 'source_amount' in kwargs and len(kwargs['source_currencies']) != len(kwargs['source_amount']):
+            raise BaseException('source_amount and source_currencies length mismatch')
 
     # TODO: if rebalance done less than some days ago, then dont rebalance again
     if args.update_min_freq:
@@ -117,6 +119,8 @@ def main(args):
         fund.leverage(mode='bull', **kwargs)
     elif args.leverage_bear:
         fund.leverage(mode='bear', **kwargs)
+    elif args.leverage_liquidate:
+        fund.leverage(mode='liquidate', **kwargs)
 
 
 if __name__ == "__main__":
@@ -150,6 +154,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Convert the portfolio to its leveraged bear coins where ever possible.",
+    )
+    exclusive_group.add_argument(
+        "--leverage_liquidate",
+        action="store_true",
+        default=False,
+        help="Liquidate the leverage position, and convert the portfolio to its non-leveraged coins.",
     )
 
     # Arguments for the regular users
@@ -188,7 +198,8 @@ if __name__ == "__main__":
         "--source_amount",
         nargs="+",
         type=float,
-        help="Source amounts to be used for source currencies/portfolio for investing to fund/portfolio. Ignored for liquidation.",
+        help="Source amounts to be used for source currencies/portfolio for investing to fund/portfolio in terms of USD. "
+        "Ignored for liquidation.",
     )
     basic_group.add_argument(
         "--source_portfolio",

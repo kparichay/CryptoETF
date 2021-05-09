@@ -60,6 +60,9 @@ class IndexFund:
                                      self.exchange.buyOrder, live_run)
 
     def __createTrades(self, liquidate_portfolio, invest_portfolio):
+        if len(liquidate_portfolio) == 0 and len(invest_portfolio) == 0:
+            return [], []
+
         ## TODO: create a graph setup that would find on with multiple base currencies for trading
         base_currency, missing_currencies = self.exchange.findBaseCurrency(liquidate_portfolio +
                                                        invest_portfolio)
@@ -159,6 +162,25 @@ class IndexFund:
         # Return the updated portfolio
         return self.getCurrentPortfolio(cached=False)
 
+    def __createPortfolioFromSource(self, source_currencies, source_amount):
+        current_portfolio = self.getCurrentPortfolio()
+
+        # intersect with source_currencies
+        if len(source_currencies) > 0:
+            current_portfolio = list(
+                filter(lambda x: x[0] in source_currencies, current_portfolio))
+            if len(source_amount) > 0:
+                assert(len(source_amount) == len(source_currencies))
+                source_portfolio = list(zip(source_currencies, source_amount))
+                for bc, ba in source_portfolio:
+                    if len(list(filter(lambda x: x[0] == bc and x[1] >= ba, current_portfolio))) != 1:
+                        raise BaseException(
+                            "Given base amount exceeds the amount in wallet")
+                    
+                current_portfolio = source_portfolio
+
+        return current_portfolio
+
     def rebalance(
         self,
         portfolio,
@@ -202,20 +224,8 @@ class IndexFund:
         if portfolio is None or len(portfolio) == 0:
             raise BaseException("New portfolio not provided.")
 
-        current_portfolio = self.getCurrentPortfolio()
-
-        # intersect with source_currencies
-        if len(source_currencies) > 0:
-            current_portfolio = list(
-                filter(lambda x: x[0] in source_currencies, current_portfolio))
-            if len(source_currencies) == len(source_amount):
-                source_portfolio = self.exchange.getPortfolioUsd(list(zip(source_currencies, source_amount)))
-                for bc, ba in source_portfolio:
-                    if len(list(filter(lambda x: x[0] == bc and x[1] > ba, current_portfolio))) != 1:
-                        raise BaseException(
-                            "Given base amount exceeds the amount in wallet")
-                    
-                current_portfolio = source_portfolio
+        # create current portfolio given the source info
+        current_portfolio = self.__createPortfolioFromSource(source_currencies, source_amount)
 
         # remove currencies which are in do_not_alter lists
         current_portfolio = list(
@@ -319,36 +329,39 @@ class IndexFund:
         if portfolio is not None or (portfolio and len(portfolio) > 0):
             raise BaseException('Portfolio not accepted with bear/bull options.')
 
-        if len(source_currencies) != 0:
-            portfolio = source_currencies
-        else:
-            portfolio = self.getCurrentPortfolio()
+        portfolio = self.__createPortfolioFromSource(source_currencies, source_amount)
 
-        leveraged_currencies = self.exchange.getLeveragedCurrencies()
-        portfolio = [x for x in portfolio if x in leveraged_currencies]
-
-        if mode == 'bull':
-            leveraged_portfolio = [self.exchange.getBullSymbol(x) for x in portfolio]
-        elif mode == 'bear':
-            leveraged_portfolio = [self.exchange.getBearSymbol(x) for x in portfolio]
+        if mode == 'liquidate':
+            target_portfolio = [(self.exchange.getDeleveragizedSymbol(x[0]), x[1]) for x in portfolio]
+            target_portfolio = [x for x in target_portfolio if x not in portfolio]
         else:
-            raise BaseException('Unsupported mode for leverage.')
+            leveraged_currencies = self.exchange.getLeveragedCurrencies()
+            portfolio = [x for x in portfolio if x[0] in leveraged_currencies]
+
+            if mode == 'bull':
+                target_portfolio = [(self.exchange.getBullSymbol(x[0]), x[1]) for x in portfolio]
+            elif mode == 'bear':
+                target_portfolio = [(self.exchange.getBearSymbol(x[0]), x[1]) for x in portfolio]
+            else:
+                raise BaseException('Unsupported mode for leverage.')
 
         if len(not_invest_list) > 0 or len(do_not_alter) > 0:
             raise BaseException('not_invest_list or do_not_alter not supported in leveraging.')
 
-        leveraged_source_amounts = []
-        if len(source_currencies) != 0 and len(source_currencies) == len(source_amount):
-            zipped_source = list(zip(source_currencies, source_amount))
-            for sym in portfolio:
-                leveraged_source_amounts.append(list(filter(lambda x: x[0] == sym, zipped_source))[0][1])
+        source_currencies = [x[0] for x in portfolio]
+        source_amount = [x[1] for x in portfolio]
+        weight = [x[1] for x in target_portfolio]
+        portfolio = [x[0] for x in target_portfolio]
+
+        if portfolio == []:
+            raise BaseException('Provided currencies cannot be leveraged or are already leveraged.')
 
         return self.reinvest(
-            portfolio=leveraged_portfolio,
-            source_currencies=portfolio,
+            portfolio=portfolio,
+            source_currencies=source_currencies,
             source_amount=source_amount,
             not_invest_list=not_invest_list,
             do_not_alter=do_not_alter,
-            weight=None,
+            weight=weight,
             live_run=live_run,
         )
