@@ -280,7 +280,7 @@ class BinanceClient:
         for symbol, amount in portfolio:
             found = False
             for base_currency in self.base_symbols:
-                if symbol + base_currency in self.all_pairs:
+                if symbol + base_currency in self.all_pairs or base_currency + symbol in self.all_pairs:
                     found = True
                     break
             if found:

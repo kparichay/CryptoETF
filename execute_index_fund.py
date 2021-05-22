@@ -34,7 +34,6 @@ def getKeys(keys_file, exchange):
 
     return keys
 
-
 def main(args):
     bnb_keys = getKeys(args.keys, "binance")
     fund = IndexFund(
@@ -71,7 +70,7 @@ def main(args):
 
         if amounts != None:
             return currencies, updated_amounts
-        
+
         return currencies, None
 
     # Create arguments for the functions based on the passed args
@@ -107,7 +106,7 @@ def main(args):
     kwargs["not_invest_list"], _ = realizePortfolio(args.not_invest_list)
 
     if DEBUG:
-        print(args) 
+        print(args)
 
     if args.liquidate:
         fund.liquidate(**kwargs)
@@ -121,7 +120,6 @@ def main(args):
         fund.leverage(mode='bear', **kwargs)
     elif args.leverage_liquidate:
         fund.leverage(mode='liquidate', **kwargs)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index Fund Manager")
@@ -184,7 +182,7 @@ if __name__ == "__main__":
     basic_group.add_argument(
         "--portfolio",
         nargs="+",
-        choices=["small", "mid", "large"],
+        type=str,
         help="Choose the prebuilt portfolios to invest in."
         "Large is top 20, medium is next 30, and small is next 100."
         "This also support directly specifying currencies as well.",
@@ -254,7 +252,7 @@ if __name__ == "__main__":
     bg_group.add_argument(
         "--email", type=str, help="Sends logs on email upon running."
     )
-    
+
     args = parser.parse_args()
 
     if args.live:

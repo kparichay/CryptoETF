@@ -14,10 +14,8 @@ import time
 # This allows timeout for balance to update as many exchanges take time for latest balance to update
 TIMEOUT_BW_CALLS = 30  # sec
 
-
 def getTimeSec():
     return round(time.time() * 1000 * 1000)
-
 
 class IndexFund:
     """
@@ -45,11 +43,10 @@ class IndexFund:
     def __executeTrades(self, trades, tradeFunc, live_run):
         self_trades = list(filter(lambda x: x[0][0] == x[0][1], trades))
         non_self_trades = list(filter(lambda x: x[0][0] != x[0][1], trades))
-        self_trades_amount = sum([quant for symbol, quant in non_self_trades])
+        self_trades_amount = sum([quant for symbol, quant in self_trades])
         non_self_trades_amount = sum([tradeFunc(symbol[0], symbol[1], quant, live_run)
             for symbol, quant in non_self_trades])
         return self_trades_amount + non_self_trades_amount
-            
 
     def __liquidateTrades(self, trades, live_run):
         return self.__executeTrades(trades,
@@ -83,7 +80,6 @@ class IndexFund:
         invest_trades = portfolio_to_trades(invest_portfolio)
 
         return liquidate_trades, invest_trades
-
 
     def __updatePortfolio(self,
                           target_portfolio,
@@ -166,7 +162,7 @@ class IndexFund:
 
         print("Updated Portfolio -> \n", updated_portfolio)
         print("##################################################")
-        print('NOTE: Uupdated Portfolio can be outdated for live mode due to limitation of the exchange API.')
+        print('NOTE: Updated Portfolio can be outdated for live mode due to limitation of the exchange API.')
 
         return updated_portfolio
 
@@ -184,7 +180,7 @@ class IndexFund:
                     if len(list(filter(lambda x: x[0] == bc and x[1] >= ba, current_portfolio))) != 1:
                         raise BaseException(
                             "Given base amount exceeds the amount in wallet")
-                    
+
                 current_portfolio = source_portfolio
 
         return current_portfolio
@@ -278,7 +274,6 @@ class IndexFund:
             live_run=live_run
         )
 
-
     def liquidate(self,
                   portfolio=[],
                   do_not_alter=[],
@@ -288,7 +283,7 @@ class IndexFund:
         self.__waitTimeout()
 
         current_portfolio = self.getCurrentPortfolio()
-        if len(portfolio) == 0:
+        if portfolio == None or len(portfolio) == 0:
             current_portfolio = current_portfolio
         else:
             current_portfolio = list(
@@ -307,9 +302,9 @@ class IndexFund:
             return
 
         # based on common base currency for current_portfolio
-        target_portfolio = [(self.exchange.findBaseCurrency(current_portfolio),
+        target_portfolio = [(self.exchange.findBaseCurrency(current_portfolio)[0],
                              total_value)]
-        
+
         # filter out currencies from ignore list
         target_portfolio = list(filter(lambda x: x not in not_invest_list, target_portfolio))
 
@@ -324,7 +319,7 @@ class IndexFund:
             live_run=live_run)
 
     def leverage(self,
-        mode,   # can be bear or bull 
+        mode,   # can be bear or bull
         portfolio,
         source_currencies=[],
         source_amount=[],
