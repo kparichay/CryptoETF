@@ -11,6 +11,7 @@
 import argparse
 import os
 import configparser
+import sys
 
 from binance_client import BinanceClient
 from index_fund import IndexFund
@@ -34,7 +35,14 @@ def getKeys(keys_file, exchange):
 
     return keys
 
-def main(args):
+def exec(args):
+    if args.live:
+        print("Warn: This is a live run and real trades will take place. ")
+        input("Press any key to continue:")
+    else:
+        print("Warn: This is a dry run and no real trades will take place. "
+        "Use --live to make actual trades.")
+
     bnb_keys = getKeys(args.keys, "binance")
     fund = IndexFund(
         BinanceClient(api_key=bnb_keys["api_key"],
@@ -109,19 +117,19 @@ def main(args):
         print(args)
 
     if args.liquidate:
-        fund.liquidate(**kwargs)
+        return fund.liquidate(**kwargs)
     elif args.reinvest:
-        fund.reinvest(**kwargs)
+        return fund.reinvest(**kwargs)
     elif args.rebalance:
-        fund.rebalance(**kwargs)
+        return fund.rebalance(**kwargs)
     elif args.leverage_bull:
-        fund.leverage(mode='bull', **kwargs)
+        return fund.leverage(mode='bull', **kwargs)
     elif args.leverage_bear:
-        fund.leverage(mode='bear', **kwargs)
+        return fund.leverage(mode='bear', **kwargs)
     elif args.leverage_liquidate:
-        fund.leverage(mode='liquidate', **kwargs)
+        return fund.leverage(mode='liquidate', **kwargs)
 
-if __name__ == "__main__":
+def parse_args(args=None):
     parser = argparse.ArgumentParser(description="Index Fund Manager")
     # Primary action to the portfolio
     # title='Primary Action', description='Choose one of the below primary action',
@@ -253,18 +261,23 @@ if __name__ == "__main__":
         "--email", type=str, help="Sends logs on email upon running."
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(args)
+    return args
 
-    if args.live:
-        print("Warn: This is a live run and real trades will take place. ")
-        input("Press any key to continue:")
-    else:
-        print("Warn: This is a dry run and no real trades will take place. "
-        "Use --live to make actual trades.")
+
+def main(args=None):
+    print(args)
+    if not args:
+        args = sys.argv[1:]
+
+    args = parse_args(args)
 
     try:
-        main(args)
+        return exec(args)
     except BaseException as e:
         print('Error:', e, '!!!')
         if DEBUG:
             raise e
+
+if __name__ == "__main__":
+    main()

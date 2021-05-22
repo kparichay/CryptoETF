@@ -67,6 +67,10 @@ class BinanceClient:
         # top 5 are sufficient, lower ones can also work but might have low volume
         # and this will result in higher spread leading to heavy cost of market transaction
         self.base_symbols = self.base_symbols[:5]
+        # if usd symbol in base_symbols, move it to the front
+        if self.getUsdSymbol() in self.base_symbols:
+            self.base_symbols.remove(self.getUsdSymbol())
+            self.base_symbols = [self.getUsdSymbol()] + self.base_symbols
 
         trade_fees = self.client.get_trade_fee()
         self.fees = dict([(x['symbol'], float(x['makerCommission'])) for x in trade_fees])
