@@ -294,11 +294,14 @@ class BinanceClient:
                 quoteOrderQty=str(value),
             )
         else:
-            lot_size = self._symbol_filter(pair, "LOT_SIZE")
+            lot_size = self._symbol_filter(pair, "MARKET_LOT_SIZE")
             if not lot_size:
-                raise RuntimeError("{} has no LOT_SIZE filter".format(pair))
+                lot_size = self._symbol_filter(pair, "LOT_SIZE")
+            if not lot_size:
+                raise RuntimeError("{} has no market lot-size filter".format(pair))
+            price = Decimal(str(self._pair_price(symbol, base)))
             quantity = self._round_down(
-                value / self._pair_price(symbol, base), lot_size["stepSize"]
+                Decimal(str(value)) / price, lot_size["stepSize"]
             )
             if Decimal(quantity) < Decimal(lot_size["minQty"]):
                 print(

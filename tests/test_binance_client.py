@@ -37,6 +37,39 @@ class FakeSpotApi:
                     ],
                 },
                 {
+                    "symbol": "DOGEUSDT",
+                    "baseAsset": "DOGE",
+                    "quoteAsset": "USDT",
+                    "status": "TRADING",
+                    "filters": [
+                        {
+                            "filterType": "LOT_SIZE",
+                            "minQty": "0.1",
+                            "stepSize": "0.1",
+                        },
+                        {
+                            "filterType": "MARKET_LOT_SIZE",
+                            "minQty": "1.00000000",
+                            "stepSize": "1.00000000",
+                        },
+                        {"filterType": "NOTIONAL", "minNotional": "10"},
+                    ],
+                },
+                {
+                    "symbol": "XRPUSDT",
+                    "baseAsset": "XRP",
+                    "quoteAsset": "USDT",
+                    "status": "TRADING",
+                    "filters": [
+                        {
+                            "filterType": "MARKET_LOT_SIZE",
+                            "minQty": "0.1",
+                            "stepSize": "0.1",
+                        },
+                        {"filterType": "NOTIONAL", "minNotional": "10"},
+                    ],
+                },
+                {
                     "symbol": "BTCUPUSDT",
                     "baseAsset": "BTCUP",
                     "quoteAsset": "USDT",
@@ -57,6 +90,8 @@ class FakeSpotApi:
         return [
             {"symbol": "ETHUSDT", "price": "2000"},
             {"symbol": "BTCUSDT", "price": "50000"},
+            {"symbol": "DOGEUSDT", "price": "0.1403"},
+            {"symbol": "XRPUSDT", "price": "0.5"},
             {"symbol": "BTCUPUSDT", "price": "10"},
             {"symbol": "BTCDOWNUSDT", "price": "10"},
         ]
@@ -116,6 +151,29 @@ def test_live_market_sell_uses_lot_size_quantity():
             "type": "MARKET",
             "quantity": "0.00049",
         }
+    ]
+
+
+def test_doge_and_xrp_market_sells_follow_market_lot_size():
+    api = FakeSpotApi()
+    client = BinanceClient("key", "secret", client=api)
+
+    client.sellOrder("DOGE", "USDT", 653.0965, live_run=True)
+    client.sellOrder("XRP", "USDT", 600, live_run=True)
+
+    assert api.orders == [
+        {
+            "symbol": "DOGEUSDT",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": "4650.00000000",
+        },
+        {
+            "symbol": "XRPUSDT",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": "1198.8",
+        },
     ]
 
 
