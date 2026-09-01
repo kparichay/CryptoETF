@@ -16,12 +16,37 @@ client in this repository.
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[dev]'
+```
+
+## Quick start
+
+Create the local credentials file by copying the example. Do not rename or edit
+`keys.sample`; it is the checked-in template. The new `keys` file is ignored by
+Git.
+
+```bash
 cp keys.sample keys
 ```
 
-Add Binance API credentials to `[binance]` in `keys`. A `[coinmarketcap]`
-`api_key` is needed for named funds. Use a Spot-only key with no withdrawal
-permission.
+Set `api_key` and `secret_key` under `[binance]`. The key needs Spot trading
+permission and should not have withdrawal permission. Set the
+`[coinmarketcap] api_key` only when using the named `Large`, `Mid`, or `Small`
+funds; explicit asset symbols do not need it.
+
+This project is configured for the non-US Binance Global endpoint (`tld=com`,
+the default). Use credentials from a Binance Global account in an eligible
+region.
+
+The main command is `execute_index_fund.py`. For example, this reads the
+account and prints an equal-weight BTC/ETH rebalance plan without submitting
+orders:
+
+```bash
+python execute_index_fund.py --rebalance --portfolio BTC ETH
+```
+
+Add `--live --yes` only after reviewing the dry-run output. See `--help` for
+all options.
 
 ## Funds
 
@@ -67,7 +92,7 @@ python execute_index_fund.py --reinvest --testnet --portfolio BTC ETH
 
 Current Binance API usage: market buys use `quoteOrderQty`; market sells use a
 `LOT_SIZE`-rounded quantity. `NOTIONAL` and `MIN_NOTIONAL` filters are handled.
-Use `--tld us` for Binance.US and `--help` for all options.
+Use `--help` for all options.
 
 ## Development
 
