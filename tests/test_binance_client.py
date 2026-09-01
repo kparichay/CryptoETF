@@ -177,10 +177,11 @@ def test_doge_and_xrp_market_sells_follow_market_lot_size():
     ]
 
 
-def test_minimum_notional_skips_the_order():
+def test_current_notional_filter_skips_small_order_without_assertion():
     api = FakeSpotApi()
     client = BinanceClient("key", "secret", client=api)
 
+    assert client._minimum_notional("BTCUSDT") == 10.0
     assert client.buyOrder("BTC", "USDT", 5, live_run=True) == 0.0
     assert api.orders == []
 
