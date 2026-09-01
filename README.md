@@ -1,49 +1,82 @@
-# Crypto Index Funds 
+# Crypto Index Funds
 
-This repository provides index funds for cryptocurrency with binance. This document is a work in progress and will soon be updated.
+Build and manage self-managed cryptocurrency index funds with Binance. The
+current implementation targets Binance Spot.
 
-# Dependencies
+## Dependencies
 
-- python-binance: [Binance Client](https://github.com/sammchardy/python-binance)
-- python-coinmarketcap: [CoinMarketCap Client](https://github.com/rsz44/python-coinmarketcap)
+- Python 3.10+
+- `python-binance` 1.0.37+
+- CoinMarketCap `/v3/cryptocurrency/listings/latest` for named funds
 
-Note: If these packages break, I will add my own API wrappers.
+The old `python-coinmarketcap` wrapper has been replaced with a small API
+client in this repository.
 
-# Funds
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+cp keys.sample keys
+```
 
-- Large Cap - top 20 funds
-- Medium Cap - next 30 funds (under top 50)
-- Small Cap - next 50 funds (under top 100)
+Add Binance API credentials to `[binance]` in `keys`. A `[coinmarketcap]`
+`api_key` is needed for named funds. Use a Spot-only key with no withdrawal
+permission.
 
-Note: Each currency is weighted equally.
+## Funds
 
-# Customizations
+- Large Cap: top 20 assets
+- Medium Cap: next 30 assets (ranks 21–50)
+- Small Cap: next 50 assets (ranks 51–100)
 
-Feel free to create your own funds based on different cyptocurrencies listing and their weightages.
+Assets are equally weighted by default. You can create custom funds by choosing
+your own assets and weights.
 
-# Functionalities
+## Functionality
 
-Multiple functionalities are supported to manage your portfolio along with leveraging.
+- **Rebalance**: rebalance a portfolio to supplied weights, or equal weights by
+  default.
+- **Reinvest**: move a subset or the full portfolio into a new portfolio.
+- **Liquidate**: liquidate a portfolio into a common quote currency.
+- **Leverage Bull/Bear/Liquidate**: the intended project scope includes moving
+  between non-leveraged and leveraged tokens. It is not available in the
+  current CLI because there is no complete supported implementation.
 
-## Rebalance
+Binance requires acceptance of its [leveraged-token terms](https://www.binance.com/en/trade/BTCUP_USDT?layout=basic&type=spot)
+and quiz before it allows leveraged-token trading.
 
-Rebalances the given portfolio to the given weights or to the equal weightage by default.
+## Usage
 
-## Reinvest
+Commands are dry runs unless `--live --yes` is supplied.
 
-Reinvest a subsection or full existing portfolio to new portfolios.
+```bash
+# Equal-weight BTC and ETH
+python execute_index_fund.py --rebalance --portfolio BTC ETH
 
-## Liquidate
+# 70/30 BTC/ETH from 500 USD of USDT
+python execute_index_fund.py --rebalance --portfolio BTC ETH --weight 70 30 \
+  --source-portfolio USDT --source-amount 500
 
-Liquidate given portfolio to fiat selected currencies.
+# Large-cap fund; requires a CoinMarketCap key
+python execute_index_fund.py --reinvest --portfolio Large \
+  --source-portfolio USDT --source-amount 100
 
-## Leverage Bull/Bear/Liquidate
+# Binance Spot Testnet
+python execute_index_fund.py --reinvest --testnet --portfolio BTC ETH
+```
 
-Invest the portfolio into leveraged tokens with bull or bear side, or liquidate leveraged position to non-leveraged portfolio.
+Current Binance API usage: market buys use `quoteOrderQty`; market sells use a
+`LOT_SIZE`-rounded quantity. `NOTIONAL` and `MIN_NOTIONAL` filters are handled.
+Use `--tld us` for Binance.US and `--help` for all options.
 
-One will have to go to the binance website and agree to the [terms and conditions](https://www.binance.com/en/trade/BTCUP_USDT?layout=basic&type=spot) for trading leveraged tokens, and take the quiz before trading leveraged tokens will be allowed by binance.
+## Development
 
+```bash
+python -m pytest
+```
 
-# Support
+The tests are offline; use a dry run and then Testnet before a live order.
 
-Feel free to add PR if you want to new feature or support other exchange.
+## Support
+
+Contributions for new features and exchanges are welcome.

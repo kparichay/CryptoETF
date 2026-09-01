@@ -1,60 +1,93 @@
-#!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
-##
-# Copyright (C) 2021 Parichay Kapoor <kparichay@gmail.com>
-# @file   coinmarketcap_client.py
-# @date   24 April 2021
-# @see
-# @author Parichay Kapoor <kparichay@gmail.com>
-# @bug    No known bugs except for NYI items
-# @brief  Client for the CoinMarketCap
+"""Small client for the CoinMarketCap listings API."""
 
-from coinmarketcapapi import CoinMarketCapAPI
+from __future__ import annotations
 
-fiat_list = ["USDT", "USDC", "BUSD", "DAI", "UST", "PAX", "HUSD", "TUSD", "USDN"]
-error_list = ["WBTC"]
+from typing import Iterable
+
+import requests
+
+
+DEFAULT_EXCLUDED_SYMBOLS = frozenset(
+    {
+        # Stablecoins and fiat-backed tokens should not enter a market-cap index.
+        "USDT",
+        "USDC",
+        "DAI",
+        "FDUSD",
+        "TUSD",
+        "USDP",
+        "PYUSD",
+        "EURC",
+        # Wrapped BTC is not an independent crypto asset for this strategy.
+        "WBTC",
+    }
+)
 LARGE_CAP = 20
 MID_CAP = 50
 SMALL_CAP = 100
+LISTINGS_URL = "https://pro-api.coinmarketcap.com/v3/cryptocurrency/listings/latest"
 
 
 class CoinMarketCapClient:
-    """
-    CoinMarketCap client to get the latest top listings sorted by market volume
-    """
+    """Retrieve investable assets ranked by CoinMarketCap market-cap rank."""
 
-    def __init__(self, api_key, ignore_list=fiat_list + error_list):
-        # Never invest in fiat
-        self.ignore_list = list(set(ignore_list + fiat_list))
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        ignore_list: Iterable[str] = (),
+        session: requests.Session | None = None,
+        timeout: float = 20,
+        listings_url: str = LISTINGS_URL,
+    ) -> None:
+        if not api_key:
+            raise ValueError("A CoinMarketCap API key is required")
 
-        self.client = CoinMarketCapAPI(api_key=api_key)
-        self.latest_listing_response = self.client.cryptocurrency_listings_latest()
-        if self.latest_listing_response.status["error_code"] != 0:
-            raise BaseException(
-                "Getting latest listings failed with error code {}".format(
-                    self.latest_listing_response.status["error_code"]
+        self.ignore_list = DEFAULT_EXCLUDED_SYMBOLS | frozenset(ignore_list)
+        self._api_key = api_key
+        self._session = session or requests.Session()
+        self._timeout = timeout
+        self._listings_url = listings_url
+        self.sorted_listing = self._fetch_listings(
+            limit=SMALL_CAP + len(self.ignore_list)
+        )
+
+    def _fetch_listings(self, *, limit: int) -> list[str]:
+        response = self._session.get(
+            self._listings_url,
+            headers={"Accept": "application/json", "X-CMC_PRO_API_KEY": self._api_key},
+            params={"start": 1, "limit": limit, "convert": "USD"},
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        status = payload.get("status", {})
+        if status.get("error_code", 0) != 0:
+            raise RuntimeError(
+                "CoinMarketCap listings request failed: {}".format(
+                    status.get("error_message", status.get("error_code"))
                 )
             )
 
-        self.sorted_listing = sorted(
-            self.latest_listing_response.data, key=lambda x: x["cmc_rank"]
+        listings = sorted(
+            payload.get("data", []), key=lambda item: item.get("cmc_rank", float("inf"))
         )
-        self.sorted_listing = [x["symbol"] for x in self.sorted_listing]
-        self.sorted_listing = list(
-            filter(lambda x: x not in self.ignore_list, self.sorted_listing)
-        )
+        return [
+            item["symbol"]
+            for item in listings
+            if item.get("symbol") and item["symbol"] not in self.ignore_list
+        ]
 
-    def __getTopK(self, ignore, k):
-        return self.sorted_listing[ignore:k]
+    def getTopK(self, k: int) -> list[str]:
+        if k < 0:
+            raise ValueError("k must be non-negative")
+        return self.sorted_listing[:k]
 
-    def getTopK(self, k):
-        return self.__getTopK(0, k)
-
-    def getLargeCap(self):
+    def getLargeCap(self) -> list[str]:
         return self.getTopK(LARGE_CAP)
 
-    def getMidCap(self):
-        return self.__getTopK(LARGE_CAP, MID_CAP)
+    def getMidCap(self) -> list[str]:
+        return self.sorted_listing[LARGE_CAP:MID_CAP]
 
-    def getSmallCap(self):
-        return self.__getTopK(MID_CAP, SMALL_CAP)
+    def getSmallCap(self) -> list[str]:
+        return self.sorted_listing[MID_CAP:SMALL_CAP]

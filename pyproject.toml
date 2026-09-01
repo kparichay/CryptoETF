@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-etf"
+version = "0.2.0"
+description = "A self-managed Binance Spot crypto index basket"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-binance>=1.0.37,<2.0",
+    "requests>=2.32,<3.0",
+]
+
+[project.optional-dependencies]
+dev = ["black>=24.0,<26.0", "pytest>=8.0,<10.0"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
