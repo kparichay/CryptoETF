@@ -1,331 +1,330 @@
-#!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
-##
-# Copyright (C) 2021 Parichay Kapoor <kparichay@gmail.com>
-# @file   binance_client.py
-# @date   24 April 2021
-# @author Parichay Kapoor <kparichay@gmail.com>
-# @bug    No known bugs except for NYI items
-# @brief  Client for the Binance exchange
+"""Binance Spot adapter used by :mod:`index_fund`.
+
+Quantities accepted by ``buyOrder`` and ``sellOrder`` are values in the quote
+currency (normally USDT), not units of the asset being bought or sold.
+"""
+
+from __future__ import annotations
 
 import time
-from collections import defaultdict
 from decimal import Decimal, ROUND_DOWN
+from typing import Any
 
 from binance.client import Client
 
-MAX_TRY_TILL_FAIL = 120  # sec
-MAX_WAIT_BW_TRIES = 10  # sec
 
-DEFAULT_FEE = 0.1 * 0.01  # fee in fraction
-
-
-def getTimeSec():
-    return round(time.time() * 1000 * 1000)
-
-BULL = 'UP'
-BEAR = 'DOWN'
+MAX_ORDER_WAIT_SECONDS = 120
+ORDER_POLL_SECONDS = 2
+DEFAULT_FEE = 0.001
+DEFAULT_QUOTE_ASSETS = ("USDT", "USDC", "FDUSD", "BTC", "ETH")
+BULL = "UP"
+BEAR = "DOWN"
 
 
 class BinanceClient:
-    """
-    Client for Binance exchange
-    TODO: add support for marginal account
-    """
+    """Adapter for Binance Spot market data, balances, and market orders."""
 
-    def __init__(self, api_key, secret_key):
-        self.client = Client(api_key, secret_key)
-        self.system_status = self.client.get_system_status()
-        if self.system_status["status"] != 0:
-            print("Error: System status is {}, exiting...".format(
-                self.system_status["msg"]))
-            raise BaseException("System status is {}".format(
-                self.system_status["msg"]))
+    def __init__(
+        self,
+        api_key: str,
+        secret_key: str,
+        *,
+        tld: str = "com",
+        testnet: bool = False,
+        client: Client | None = None,
+    ) -> None:
+        if not api_key or not secret_key:
+            raise ValueError("Binance api_key and secret_key are required")
+        self.client = client or Client(api_key, secret_key, tld=tld, testnet=testnet)
+        self.testnet = testnet
+        self.info: dict[str, Any] | None = None
+        self.balance: list[dict[str, str]] = []
+        self.all_symbols: set[str] = set()
+        self._verify_status()
+        self._refresh_market_metadata()
+        self.fees = self._load_fees()
 
-        self.account_status = self.client.get_account_status()
-        if (self.account_status["data"] != "Normal"):
-            print(
-                "Error: Account status is not normal or could not be retreived, exiting..."
-            )
-            raise BaseException("Account status is not normal")
+    def _verify_status(self) -> None:
+        if hasattr(self.client, "get_system_status"):
+            self.system_status = self.client.get_system_status()
+            if self.system_status["status"] != 0:
+                raise RuntimeError(
+                    "Binance system status is {}".format(self.system_status["msg"])
+                )
+        if hasattr(self.client, "get_account_status"):
+            self.account_status = self.client.get_account_status()
+            if self.account_status["data"] != "Normal":
+                raise RuntimeError("Binance account status is not Normal")
 
+    def _refresh_market_metadata(self) -> None:
+        exchange_info = self.client.get_exchange_info()
+        self.all_pairs_info = exchange_info
+        symbols = [
+            item
+            for item in exchange_info["symbols"]
+            if item.get("status", "TRADING") == "TRADING"
+        ]
+        self.pair_info = {item["symbol"]: item for item in symbols}
+        self.all_pairs = {
+            item["symbol"]: float(item["price"])
+            for item in self.client.get_all_tickers()
+            if item["symbol"] in self.pair_info and float(item["price"]) > 0
+        }
+        self.all_symbols = {
+            asset
+            for item in self.pair_info.values()
+            for asset in (item["baseAsset"], item["quoteAsset"])
+        }
+        quote_counts: dict[str, int] = {}
+        for item in self.pair_info.values():
+            quote = item["quoteAsset"]
+            quote_counts[quote] = quote_counts.get(quote, 0) + 1
+        ranked_quotes = sorted(
+            quote_counts, key=lambda asset: quote_counts[asset], reverse=True
+        )
+        self.base_symbols = [
+            asset for asset in DEFAULT_QUOTE_ASSETS if asset in quote_counts
+        ]
+        self.base_symbols.extend(
+            asset for asset in ranked_quotes if asset not in self.base_symbols
+        )
+
+    def _refresh_balance(self) -> None:
         self.info = self.client.get_account()
-        self.all_pairs = dict([(x["symbol"], float(x["price"]))
-                               for x in self.client.get_all_tickers()])
-        self.all_pairs_info = self.client.get_exchange_info()
-        self.__updateBalance()
-
-        base_symbols_count = defaultdict(int)
-        for sym in self.all_symbols:
-            for pair in self.all_pairs:
-                if pair.endswith(sym):
-                    base_symbols_count[sym] += 1
-
-        self.base_symbols = sorted(base_symbols_count.items(), key=lambda x: x[1], reverse=True)
-        # base symbols are sorted by the number of pairs they form
-        self.base_symbols = [x[0] for x in self.base_symbols]
-        # top 5 are sufficient, lower ones can also work but might have low volume
-        # and this will result in higher spread leading to heavy cost of market transaction
-        self.base_symbols = self.base_symbols[:5]
-        # if usd symbol in base_symbols, move it to the front
-        if self.getUsdSymbol() in self.base_symbols:
-            self.base_symbols.remove(self.getUsdSymbol())
-            self.base_symbols = [self.getUsdSymbol()] + self.base_symbols
-
-        trade_fees = self.client.get_trade_fee()
-        self.fees = dict([(x['symbol'], float(x['makerCommission'])) for x in trade_fees])
-        # binance API gives 0 fee for some scenarios but its not zero
-        for sym in self.fees:
-            if self.fees[sym] == 0:
-                self.fees[sym] = DEFAULT_FEE
-
-    def __updateBalance(self, cached=True):
-        if hasattr(self, "balance") and cached:
-            return
-
         self.full_balance = self.info["balances"]
-        self.all_symbols = [x["asset"] for x in self.full_balance]
-        # balance must be more than 0
-        self.balance = list(
-            filter(
-                lambda x: float(x["free"]) > 0,
-                self.full_balance,
-            ))
-        # all symbols in balance must be tradeable
-        self.balance = list(filter(lambda x: len([y for y in self.all_pairs if y.startswith(x['asset'])]) > 0, self.balance))
+        self.balance = [
+            item for item in self.info["balances"] if float(item["free"]) > 0
+        ]
 
-    def __getNumPairsWithBaseCurrencies(self):
-        for base in self.base_symbols:
-            print(
-                "base = ",
-                base,
-                ", num of pairs = ",
-                len(
-                    list(
-                        filter(lambda x: x.endswith(base),
-                               self.all_pairs.keys()))),
-            )
+    def _load_fees(self) -> dict[str, float]:
+        """Use per-symbol maker fees when the account endpoint permits it."""
+        try:
+            fees = self.client.get_trade_fee()
+        except (AttributeError, OSError):
+            return {}
+        return {
+            item["symbol"]: float(item["makerCommission"])
+            for item in fees
+            if float(item["makerCommission"]) > 0
+        }
 
-    def __getPairPrice(self, sym1, sym2):
-        pair = sym1 + sym2
-        pair_ = sym2 + sym1
-        if pair in self.all_pairs:
-            return self.all_pairs[pair]
-        elif pair_ in self.all_pairs:
-            return 1.0 / self.all_pairs[pair_]
+    def _fee(self, pair: str) -> float:
+        return self.fees.get(pair, DEFAULT_FEE)
 
-        raise BaseException("pair not found")
+    def _pair_price(self, asset: str, quote: str) -> float:
+        if asset == quote:
+            return 1.0
+        direct = asset + quote
+        inverse = quote + asset
+        if direct in self.all_pairs:
+            return self.all_pairs[direct]
+        if inverse in self.all_pairs:
+            return 1.0 / self.all_pairs[inverse]
+        raise ValueError("No price is available for {} in {}".format(asset, quote))
 
-    def __getPriceWrt(self, symbol, base):
-        if base not in self.base_symbols:
-            raise BaseException("base currency not found")
-        if symbol not in self.all_symbols:
-            raise BaseException("symbol not found")
+    def _price_in_quote(self, asset: str, quote: str) -> float:
+        try:
+            return self._pair_price(asset, quote)
+        except ValueError:
+            for bridge in self.base_symbols:
+                if bridge in (asset, quote):
+                    continue
+                try:
+                    return self._pair_price(asset, bridge) * self._pair_price(
+                        bridge, quote
+                    )
+                except ValueError:
+                    continue
+        raise ValueError(
+            "No supported price route is available for {} in {}".format(asset, quote)
+        )
 
-        price_wrt_base = None
-        price_base = None
-        for base_cur in [base] + self.base_symbols:
+    def getUsdSymbol(self) -> str:
+        return "USDT"
+
+    def getPairPrice(self, symbol: str, base: str) -> float:
+        return self._price_in_quote(symbol, base)
+
+    def getPortfolioUsd(
+        self, portfolio: list[tuple[str, float | str]]
+    ) -> list[tuple[str, float]]:
+        return [
+            (asset, float(amount) * self._price_in_quote(asset, self.getUsdSymbol()))
+            for asset, amount in portfolio
+        ]
+
+    def getBalanceUsd(
+        self, cached: bool = True, ignore_small_amounts: float = 20
+    ) -> list[tuple[str, float]]:
+        if not cached or self.info is None:
+            self._refresh_balance()
+        valued = []
+        for item in self.balance:
             try:
-                price_wrt_base = self.__getPairPrice(symbol, base_cur)
-                price_base = base_cur
-                break
-            except:
-                pass
-
-        if base == price_base:
-            return price_wrt_base
-        else:
-            return price_wrt_base * self.__getPairPrice(price_base, base)
-
-    def getPairPrice(self, symbol, base):
-        if symbol == base:
-            return 1.
-        else:
-            return self.__getPriceWrt(symbol, base)
-
-    def getUsdSymbol(self):
-        return 'USDT'
-
-    def getBalanceUsd(self, cached=True, ignore_small_amounts=20):
-        self.__updateBalance(cached=cached)
-        balance_usd = self.getPortfolioUsd([(b['asset'], b['free']) for b in self.balance])
-
-        self.balance_usd = sorted(balance_usd,
-                                  key=lambda x: x[1],
-                                  reverse=True)
-        self.balance_usd = list(
-            filter(lambda x: x[1] > ignore_small_amounts, self.balance_usd))
+                value = float(item["free"]) * self._price_in_quote(
+                    item["asset"], self.getUsdSymbol()
+                )
+            except ValueError:
+                continue
+            if value > ignore_small_amounts:
+                valued.append((item["asset"], value))
+        self.balance_usd = sorted(valued, key=lambda item: item[1], reverse=True)
         return self.balance_usd
 
-    def getPortfolioUsd(self, portfolio):
-        portfolio = [(x[0], float(x[1]) * self.__getPriceWrt(x[0], base=self.getUsdSymbol())) for x in portfolio]
-        return portfolio
+    def _leveraged_assets(self, side: str) -> set[str]:
+        assets = set()
+        for pair in self.pair_info.values():
+            asset = pair["baseAsset"]
+            quote = pair["quoteAsset"]
+            if asset.endswith(side) and asset[: -len(side)] + quote in self.pair_info:
+                assets.add(asset[: -len(side)])
+        return assets
 
-    def __getPairLotInfo(self, pair, key, filter_type):
-        pair_info = list(filter(lambda x : x['symbol'] == pair, self.all_pairs_info['symbols']))[0]
-        min_info = list(
-            filter(lambda x: x["filterType"] == filter_type,
-                   pair_info["filters"]))
-        assert len(min_info) == 1
-        return min_info[0][key]
+    def getLeveragedCurrencies(self) -> list[str]:
+        """Return assets with both UP and DOWN Spot tokens."""
+        return sorted(self._leveraged_assets(BULL) & self._leveraged_assets(BEAR))
 
-    def __getMinNotional(self, pair):
-        return float(self.__getPairLotInfo(pair, "minNotional",
-                                           "MIN_NOTIONAL"))
-
-    def __getMinQuantity(self, pair):
-        return float(self.__getPairLotInfo(pair, "minQty", "LOT_SIZE"))
-
-    def __getStepSize(self, pair):
-        return float(self.__getPairLotInfo(pair, "stepSize", "LOT_SIZE"))
-
-    def __placeOrder(self, symbol, base, side, quant, live_run):
-        pair = symbol + base
-        pair_str = symbol + '/' + base
-        if pair not in self.all_pairs:
-            raise BaseException('Pair to trade is not available on the exchange')
-
-        # reduce the quant by fee to avoid not enough balance issues
-        quant *= 1 - self.fees[pair]
-
-        # if quant is below minimum tradeable quantity, then simply return
-        if quant < self.__getMinNotional(pair):
-            print(
-                "Warn: {} quantity less than minimum notional quantity, skipping...".format(pair_str))
-            return 0.0
-
-        # Convert quant from base to target
-        base_quant = quant
-        price = self.__getPriceWrt(symbol, base=base)
-        quant = quant / price
-
-        # if quant is below minimum tradeable quantity, then simply return
-        if quant < self.__getMinQuantity(pair):
-            print(
-                "Warn: {} quantity less than minimum tradeable quantity, skipping...".format(pair_str))
-            return 0.0
-
-        # ensure that quantity follow stepsize granularity
-        step_size = str(self.__getStepSize(pair))
-        quant = str(
-            Decimal(quant).quantize(Decimal(step_size), rounding=ROUND_DOWN))
-        base_quant = str(
-            Decimal(base_quant).quantize(Decimal(step_size), rounding=ROUND_DOWN))
-
-        print(" pair = {}, side = {}, base quant = {}, quant = {}".format(
-            pair_str, side, base_quant, quant))
-
-        if live_run:
-            order = self.client.create_order(symbol=pair,
-                                            side=side,
-                                            type=Client.ORDER_TYPE_MARKET,
-                                            quantity=quant)
-
-            if order == None:
-                raise BaseException("Placing the order failed")
-
-            start_time = getTimeSec()
-            while (order["status"] != "FILLED"
-                and getTimeSec() <= MAX_TRY_TILL_FAIL + start_time):
-                time.sleep(MAX_WAIT_BW_TRIES)
-                order = self.client.get_order(symbol=pair,
-                                            orderId=order["orderId"])
-
-            if order["status"] != "FILLED":
-                raise BaseException("Order did not fill itself")
-
-            traded_quant = 0
-            for fill in order["fills"]:
-                traded_quant += float(fill["price"]) * float(
-                    fill["qty"]) * (1 - self.fees[pair])
-
-            return traded_quant
-        else:
-            return 0
-
-    def buyOrder(self, symbol, base, quant, live_run):
-        return self.__placeOrder(symbol,
-                                 base,
-                                 side=Client.SIDE_BUY,
-                                 quant=quant, 
-                                 live_run=live_run)
-
-    def sellOrder(self, symbol, base, quant, live_run):
-        return self.__placeOrder(symbol,
-                                 base,
-                                 side=Client.SIDE_SELL,
-                                 quant=quant,
-                                 live_run=live_run)
-
-    def findBaseCurrency(self, portfolio):
-        portfolio = [x[0] for x in portfolio]
-        min_num_missing_currencies = len(portfolio)
-        best_base_currency = None
-
-        for base_currency in self.base_symbols:
-            num_missing_currencies = len(list(filter(
-                            lambda x: x + base_currency not in self.
-                            all_pairs and x != base_currency,
-                            portfolio)))
-
-            if num_missing_currencies < min_num_missing_currencies:
-                min_num_missing_currencies = num_missing_currencies
-                best_base_currency = base_currency
-
-        missing_currencies = list(filter(
-                            lambda x: x + best_base_currency not in self.
-                            all_pairs and x != best_base_currency,
-                            portfolio))
-        
-        return best_base_currency, missing_currencies
-
-    def getSupportedPortfolio(self, portfolio):
-        supported_portfolio = []
-        for symbol, amount in portfolio:
-            found = False
-            for base_currency in self.base_symbols:
-                if symbol + base_currency in self.all_pairs or base_currency + symbol in self.all_pairs:
-                    found = True
-                    break
-            if found:
-                supported_portfolio.append((symbol, amount))
-            else:
-                print('Warn: Symbol ', symbol, ' not supported by the exchange')
-
-        return supported_portfolio
-
-    def __getLeveragedCurrencies(self, direction):
-        return [x.split(direction)[0] for x in self.all_pairs if direction in x and ''.join(x.split(direction)) in self.all_pairs]
-
-    def getLeveragedCurrencies(self):
-        if hasattr(self, 'all_leveraged_symbols'):
-            return self.all_leveraged_symbols
-
-        ups = self.__getLeveragedCurrencies(BULL)
-        downs = self.__getLeveragedCurrencies(BEAR)
-        self.all_leveraged_symbols = list(set(ups) & set(downs))
-
-        return self.all_leveraged_symbols
-
-    def __getLeveragedSymbol(self, symbol, side):
+    def _leveraged_symbol(self, symbol: str, side: str) -> str:
         if symbol not in self.all_symbols:
-            raise BaseException('Given symbol ', symbol, ' not supported')
-
+            raise ValueError("Given symbol {} is not supported".format(symbol))
         if symbol not in self.getLeveragedCurrencies():
-            raise BaseException('Given symbol ', symbol, ' cannot be leveraged.')
-
+            raise ValueError("Given symbol {} cannot be leveraged".format(symbol))
         return symbol + side
-        
-    def getBullSymbol(self, symbol):
-        return self.__getLeveragedSymbol(symbol, side=BULL)
 
-    def getBearSymbol(self, symbol):
-        return self.__getLeveragedSymbol(symbol, side=BEAR)
+    def getBullSymbol(self, symbol: str) -> str:
+        return self._leveraged_symbol(symbol, BULL)
 
-    def getDeleveragizedSymbol(self, symbol):
+    def getBearSymbol(self, symbol: str) -> str:
+        return self._leveraged_symbol(symbol, BEAR)
+
+    def getDeleveragizedSymbol(self, symbol: str) -> str:
+        """Return the base asset for an UP/DOWN token (legacy public spelling)."""
         if symbol.endswith(BULL):
-            return symbol[:-len(BULL)]
-        elif symbol.endswith(BEAR):
-            return symbol[:-len(BEAR)]
+            return symbol[: -len(BULL)]
+        if symbol.endswith(BEAR):
+            return symbol[: -len(BEAR)]
+        return symbol
+
+    def findBaseCurrency(
+        self, portfolio: list[tuple[str, float]]
+    ) -> tuple[str, list[str]]:
+        assets = [asset for asset, _ in portfolio]
+        candidates = self.base_symbols or [self.getUsdSymbol()]
+        best = min(
+            candidates,
+            key=lambda base: sum(
+                asset != base and asset + base not in self.pair_info for asset in assets
+            ),
+        )
+        missing = [
+            asset
+            for asset in assets
+            if asset != best and asset + best not in self.pair_info
+        ]
+        return best, missing
+
+    def getSupportedPortfolio(
+        self, portfolio: list[tuple[str, float]]
+    ) -> list[tuple[str, float]]:
+        supported: list[tuple[str, float]] = []
+        for asset, amount in portfolio:
+            if asset in self.base_symbols or any(
+                asset + base in self.pair_info for base in self.base_symbols
+            ):
+                supported.append((asset, amount))
+            else:
+                print(
+                    (
+                        "Warning: {} is not tradeable against a supported "
+                        "quote asset"
+                    ).format(asset)
+                )
+        return supported
+
+    def _symbol_filter(self, pair: str, filter_type: str) -> dict[str, str] | None:
+        return next(
+            (
+                item
+                for item in self.pair_info[pair]["filters"]
+                if item["filterType"] == filter_type
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _round_down(value: float, step_size: str) -> str:
+        step = Decimal(step_size)
+        return format(
+            (Decimal(str(value)) / step).to_integral_value(rounding=ROUND_DOWN) * step,
+            "f",
+        )
+
+    def _minimum_notional(self, pair: str) -> float:
+        details = self._symbol_filter(pair, "NOTIONAL") or self._symbol_filter(
+            pair, "MIN_NOTIONAL"
+        )
+        return float(details.get("minNotional", 0)) if details else 0.0
+
+    def _place_order(
+        self, symbol: str, base: str, side: str, value: float, live_run: bool
+    ) -> float:
+        pair = symbol + base
+        if pair not in self.pair_info:
+            raise ValueError("{} is not a directly tradeable Spot pair".format(pair))
+        fee = self._fee(pair)
+        value *= 1 - fee
+        if value < self._minimum_notional(pair):
+            print(
+                (
+                    "Warning: {} value is below Binance's minimum "
+                    "notional; skipping"
+                ).format(pair)
+            )
+            return 0.0
+
+        if not live_run:
+            print("DRY RUN: {} {} worth of {}".format(side, value, pair))
+            return value
+
+        if side == Client.SIDE_BUY:
+            order = self.client.create_order(
+                symbol=pair,
+                side=side,
+                type=Client.ORDER_TYPE_MARKET,
+                quoteOrderQty=str(value),
+            )
         else:
-            return symbol
+            lot_size = self._symbol_filter(pair, "LOT_SIZE")
+            if not lot_size:
+                raise RuntimeError("{} has no LOT_SIZE filter".format(pair))
+            quantity = self._round_down(
+                value / self._pair_price(symbol, base), lot_size["stepSize"]
+            )
+            if Decimal(quantity) < Decimal(lot_size["minQty"]):
+                print(
+                    "Warning: {} quantity is below Binance's minimum; skipping".format(
+                        pair
+                    )
+                )
+                return 0.0
+            order = self.client.create_order(
+                symbol=pair, side=side, type=Client.ORDER_TYPE_MARKET, quantity=quantity
+            )
+
+        deadline = time.monotonic() + MAX_ORDER_WAIT_SECONDS
+        while order["status"] != "FILLED" and time.monotonic() < deadline:
+            time.sleep(ORDER_POLL_SECONDS)
+            order = self.client.get_order(symbol=pair, orderId=order["orderId"])
+        if order["status"] != "FILLED":
+            raise RuntimeError(
+                "Market order {} did not fill within {} seconds".format(
+                    pair, MAX_ORDER_WAIT_SECONDS
+                )
+            )
+        return float(order.get("cummulativeQuoteQty", value)) * (1 - fee)
+
+    def buyOrder(self, symbol: str, base: str, quant: float, live_run: bool) -> float:
+        return self._place_order(symbol, base, Client.SIDE_BUY, quant, live_run)
+
+    def sellOrder(self, symbol: str, base: str, quant: float, live_run: bool) -> float:
+        return self._place_order(symbol, base, Client.SIDE_SELL, quant, live_run)

@@ -1,283 +1,173 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
-##
-# Copyright (C) 2021 Parichay Kapoor <kparichay@gmail.com>
-# @file   execute_index_fund.py
-# @date   24 April 2021
-# @author Parichay Kapoor <kparichay@gmail.com>
-# @bug    No known bugs except for NYI items
-# @brief  Execute the actions for index fund
+"""Command-line entry point for a self-managed crypto index fund."""
+
+from __future__ import annotations
 
 import argparse
-import os
 import configparser
-import sys
+from pathlib import Path
+from typing import Sequence
 
 from binance_client import BinanceClient
-from index_fund import IndexFund
 from coinmarketcap_client import CoinMarketCapClient
+from index_fund import IndexFund
 
-DEBUG=True
 
-def getKeys(keys_file, exchange):
-    # parse keys
-    if not os.path.isfile(keys_file):
-        raise BaseException("Provided keys file does not exist")
-
+def get_keys(keys_file: str, exchange: str) -> dict[str, str]:
+    path = Path(keys_file)
+    if not path.is_file():
+        raise FileNotFoundError("Keys file does not exist: {}".format(path))
     config = configparser.ConfigParser()
-    config.read(keys_file)
+    config.read(path)
+    return dict(config[exchange]) if exchange in config else {}
 
-    keys = {}
-    # Get keys for the given exchange
-    if exchange in config:
-        for key in config[exchange]:
-            keys[key] = config[exchange][key]
 
-    return keys
+def _realize_portfolio(portfolio, amounts, cmc):
+    if amounts is not None and len(portfolio or []) != len(amounts):
+        raise ValueError(
+            "--source-amount must provide one value per --source-portfolio entry"
+        )
+    currencies: list[str] = []
+    realized_amounts: list[float] = []
+    amount_set = amounts is not None
+    for index, entry in enumerate(portfolio or []):
+        selector_name = "get{}Cap".format(entry.title())
+        is_selector = entry.lower() in {"large", "mid", "small"}
+        if is_selector and cmc is None:
+            raise ValueError("{} requires a [coinmarketcap] api_key".format(entry))
+        selector = getattr(cmc, selector_name, None) if cmc else None
+        selected = selector() if selector else [entry]
+        currencies.extend(selected)
+        if amount_set:
+            realized_amounts.extend([amounts[index] / len(selected)] * len(selected))
+    return currencies, realized_amounts if amount_set else None
 
-def exec(args):
-    if args.live:
-        print("Warn: This is a live run and real trades will take place. ")
-        input("Press any key to continue:")
-    else:
-        print("Warn: This is a dry run and no real trades will take place. "
-        "Use --live to make actual trades.")
 
-    bnb_keys = getKeys(args.keys, "binance")
-    fund = IndexFund(
-        BinanceClient(api_key=bnb_keys["api_key"],
-                      secret_key=bnb_keys["secret_key"])
+def run(args: argparse.Namespace):
+    if args.live and not args.yes:
+        raise ValueError(
+            "Live trading requires --yes. Use --testnet first whenever possible."
+        )
+    print(
+        "LIVE RUN: real orders may be submitted."
+        if args.live
+        else "DRY RUN: no orders will be submitted."
     )
 
-    cmc_keys = getKeys(args.keys, "coinmarketcap")
-    if 'api_key' in cmc_keys and len(cmc_keys['api_key']) > 0:
-        cmc = CoinMarketCapClient(cmc_keys["api_key"])
-    else:
-        print('Warn: CoinMarketCap key not provided. ' \
-            'Default portfolios (Large, Mid, Small) will not be supported.')
-        cmc = None
+    binance_keys = get_keys(args.keys, "binance")
+    fund = IndexFund(
+        BinanceClient(
+            api_key=binance_keys.get("api_key", ""),
+            secret_key=binance_keys.get("secret_key", ""),
+            tld=args.tld,
+            testnet=args.testnet,
+        )
+    )
 
-    def realizePortfolio(portfolio, amounts=None):
-        amount_set = False
-        if amounts != None:
-            amount_set = len(portfolio) == len(amounts)
+    cmc_keys = get_keys(args.keys, "coinmarketcap")
+    cmc = CoinMarketCapClient(cmc_keys["api_key"]) if cmc_keys.get("api_key") else None
 
-        currencies = []
-        updated_amounts = []
-        for idx, pf in enumerate(portfolio):
-            if cmc and hasattr(cmc, "get" + pf.title() + "Cap"):
-                new_portfolio = cmc.__getattribute__("get" + pf.title() + "Cap")()
-                currencies += new_portfolio
-                if amount_set:
-                    new_amount = [amounts[idx] / len(new_portfolio)] * len(new_portfolio)
-                    updated_amounts += new_amount
-            else:
-                currencies.append(pf)
-                if amount_set:
-                    updated_amounts.append(amounts[idx])
-
-        if amounts != None:
-            return currencies, updated_amounts
-
-        return currencies, None
-
-    # Create arguments for the functions based on the passed args
-    kwargs = {}
-    kwargs["live_run"] = args.live
-
-    kwargs['portfolio'] = None
-    if args.portfolio:
-        kwargs['portfolio'], _ = realizePortfolio(args.portfolio)
-        if len(kwargs['portfolio']) == 0 and len(args.portfolio) > 0:
-            raise BaseException('Provided portfolio not supported with the given information'
-            'Considering providing other portfolios or giving exchange keys, if any')
-        if len(args.portfolio) < len(kwargs['portfolio']):
-            print('Some of the unsupported coins in portfolio have been removed.')
-            print('Target portfolio - ', kwargs['portfolio'])
-            input("Press any key to continue:")
-
+    kwargs = {"live_run": args.live}
+    kwargs["portfolio"], _ = _realize_portfolio(args.portfolio, None, cmc)
     if args.weight:
         kwargs["weight"] = args.weight
-
     if args.source_portfolio:
-        kwargs["source_currencies"], kwargs["source_amount"] = realizePortfolio(args.source_portfolio, args.source_amount)
-        if kwargs['source_amount'] == None or len(kwargs['source_amount']) == 0:
-            del kwargs["source_amount"]
-        if 'source_amount' in kwargs and len(kwargs['source_currencies']) != len(kwargs['source_amount']):
-            raise BaseException('source_amount and source_currencies length mismatch')
-
-    # TODO: if rebalance done less than some days ago, then dont rebalance again
-    if args.update_min_freq:
-        raise BaseException("Update minimum frequency is not yet enabled")
-
-    kwargs["do_not_alter"], _ = realizePortfolio(args.do_not_alter)
-    kwargs["not_invest_list"], _ = realizePortfolio(args.not_invest_list)
-
-    if DEBUG:
-        print(args)
+        source, amounts = _realize_portfolio(
+            args.source_portfolio, args.source_amount, cmc
+        )
+        kwargs["source_currencies"] = source
+        if amounts:
+            kwargs["source_amount"] = amounts
+    elif args.source_amount:
+        raise ValueError("--source-amount requires --source-portfolio")
+    kwargs["do_not_alter"], _ = _realize_portfolio(args.do_not_alter, None, cmc)
+    kwargs["not_invest_list"], _ = _realize_portfolio(args.not_invest_list, None, cmc)
 
     if args.liquidate:
-        return fund.liquidate(**kwargs)
-    elif args.reinvest:
+        return fund.liquidate(
+            portfolio=kwargs["portfolio"],
+            do_not_alter=kwargs["do_not_alter"],
+            not_invest_list=kwargs["not_invest_list"],
+            live_run=args.live,
+        )
+    if args.reinvest:
+        if not kwargs["portfolio"]:
+            raise ValueError("--reinvest requires --portfolio")
         return fund.reinvest(**kwargs)
-    elif args.rebalance:
-        return fund.rebalance(**kwargs)
-    elif args.leverage_bull:
-        return fund.leverage(mode='bull', **kwargs)
-    elif args.leverage_bear:
-        return fund.leverage(mode='bear', **kwargs)
-    elif args.leverage_liquidate:
-        return fund.leverage(mode='liquidate', **kwargs)
+    return fund.rebalance(**kwargs)
 
-def parse_args(args=None):
-    parser = argparse.ArgumentParser(description="Index Fund Manager")
-    # Primary action to the portfolio
-    # title='Primary Action', description='Choose one of the below primary action',
-    exclusive_group = parser.add_mutually_exclusive_group(required=True)
-    ## TODO: ensure that liquidate happens to USDT only than a selected base currency
-    ## If this isnt possible, give option to user
-    exclusive_group.add_argument(
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create and rebalance a Binance Spot crypto index fund."
+    )
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument(
         "--liquidate",
         action="store_true",
-        default=False,
-        help="Liquidate the portfoilio.",
+        help="Sell the selected holdings into a common quote asset.",
     )
-    exclusive_group.add_argument(
-        "--reinvest", action="store_true", default=False, help="Reinvest from source to target portfolio."
+    actions.add_argument(
+        "--reinvest",
+        action="store_true",
+        help="Move selected holdings into the target portfolio.",
     )
-    exclusive_group.add_argument(
+    actions.add_argument(
         "--rebalance",
         action="store_true",
-        default=False,
-        help="Rebalance the portfoilio.",
+        help="Rebalance selected holdings to the target weights.",
     )
-    exclusive_group.add_argument(
-        "--leverage_bull",
+    parser.add_argument(
+        "--keys", default="keys", help="INI credentials file; see keys.sample."
+    )
+    parser.add_argument(
+        "--tld", default="com", help="Binance domain suffix, for example 'us'."
+    )
+    parser.add_argument(
+        "--testnet",
         action="store_true",
-        default=False,
-        help="Convert the portfolio to its leveraged bull coins where ever possible.",
+        help="Use Binance Spot Testnet credentials and endpoint.",
     )
-    exclusive_group.add_argument(
-        "--leverage_bear",
-        action="store_true",
-        default=False,
-        help="Convert the portfolio to its leveraged bear coins where ever possible.",
+    parser.add_argument(
+        "--live", action="store_true", help="Submit real orders; requires --yes."
     )
-    exclusive_group.add_argument(
-        "--leverage_liquidate",
-        action="store_true",
-        default=False,
-        help="Liquidate the leverage position, and convert the portfolio to its non-leveraged coins.",
+    parser.add_argument(
+        "--yes", action="store_true", help="Acknowledge that --live can submit orders."
     )
-
-    # Arguments for the regular users
-    basic_group = parser.add_argument_group(
-        title="Basic Arguments", description="for regular users."
-    )
-    basic_group.add_argument(
-        "--keys",
-        type=str,
-        default="keys",
-        help="File containing the keys of the accounts. \
-                                 Check keys.sample to create one for yourself.",
-    )
-    basic_group.add_argument(
-        "--live",
-        action="store_true",
-        default=False,
-        help="Do a live-run where real trades takes place.",
-    )
-    basic_group.add_argument(
+    parser.add_argument(
         "--portfolio",
         nargs="+",
-        type=str,
-        help="Choose the prebuilt portfolios to invest in."
-        "Large is top 20, medium is next 30, and small is next 100."
-        "This also support directly specifying currencies as well.",
+        help="Assets or built-in selectors: Large, Mid, Small.",
     )
-    basic_group.add_argument(
-        "--weight",
+    parser.add_argument(
+        "--weight", nargs="+", type=float, help="Target weights, normalized to 1."
+    )
+    parser.add_argument(
+        "--source-portfolio",
+        nargs="+",
+        help="Assets/selectors to fund the operation from.",
+    )
+    parser.add_argument(
+        "--source-amount",
         nargs="+",
         type=float,
-        help="Weightage for the investments. Given weights will be normalized. \
-        Defaults to equal weightage.",
+        help="USD amount for each source entry.",
     )
-    basic_group.add_argument(
-        "--source_amount",
+    parser.add_argument(
+        "--do-not-alter", nargs="+", default=[], help="Assets that must not be traded."
+    )
+    parser.add_argument(
+        "--not-invest-list",
         nargs="+",
-        type=float,
-        help="Source amounts to be used for source currencies/portfolio for investing to fund/portfolio in terms of USD. "
-        "Ignored for liquidation.",
-    )
-    basic_group.add_argument(
-        "--source_portfolio",
-        nargs="+",
-        type=str,
-        help="source currencies/portfolio from where to invest from. Ignore for liquidation.",
-    )
-    basic_group.add_argument(
-        "--update_min_freq",
-        type=int,
-        help="number of hours to wait before the previous rebalance or reinvest. This aragument is ignored for liquidate.",
-    )
-
-    # Arguments for the professional users
-    pro_group = parser.add_argument_group(
-        title="Pro Arguments",
-        description="Only for professional users. \
-            Pro arguments override regular arguments.",
-    )
-    pro_group.add_argument(
-        "--do_not_alter",
-        nargs="+",
-        type=str,
         default=[],
-        help="Investment in these currencies shall not be altered.",
+        help="Assets excluded from the target.",
     )
-    pro_group.add_argument(
-        "--not_invest_list",
-        nargs="+",
-        type=str,
-        default=[],
-        help="Investment in these currencies shall not be done. \
-        Already invested amount will be redeemed.",
-    )
-
-    # TODO: Arguments for running this as a background script
-    bg_group = parser.add_argument_group(
-        title="Background script Arguments",
-        description="for running this in background.",
-    )
-    bg_group.add_argument(
-        "--cron",
-        action="store_true",
-        default=False,
-        help="The given configuration will run as a cron job",
-    )
-    bg_group.add_argument(
-        "--freq", type=int, default=24, help="The given configuration will run at this frequency in hours."
-    )
-    bg_group.add_argument(
-        "--email", type=str, help="Sends logs on email upon running."
-    )
-
-    args = parser.parse_args(args)
-    return args
+    return parser.parse_args(argv)
 
 
-def main(args=None):
-    print(args)
-    if not args:
-        args = sys.argv[1:]
+def main(argv: Sequence[str] | None = None):
+    return run(parse_args(argv))
 
-    args = parse_args(args)
-
-    try:
-        return exec(args)
-    except BaseException as e:
-        print('Error:', e, '!!!')
-        if DEBUG:
-            raise e
 
 if __name__ == "__main__":
     main()
