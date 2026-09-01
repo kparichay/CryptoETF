@@ -62,7 +62,7 @@ class CoinMarketCapClient:
         response.raise_for_status()
         payload = response.json()
         status = payload.get("status", {})
-        if status.get("error_code", 0) != 0:
+        if str(status.get("error_code", "0")) != "0":
             raise RuntimeError(
                 "CoinMarketCap listings request failed: {}".format(
                     status.get("error_message", status.get("error_code"))

@@ -7,7 +7,7 @@ class FakeResponse:
 
     def json(self):
         return {
-            "status": {"error_code": 0},
+            "status": {"error_code": "0"},
             "data": [
                 {"symbol": "USDT", "cmc_rank": 1},
                 {"symbol": "ETH", "cmc_rank": 3},
