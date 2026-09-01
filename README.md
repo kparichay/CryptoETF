@@ -67,7 +67,8 @@ python execute_index_fund.py --reinvest --testnet --portfolio BTC ETH
 
 Current Binance API usage: market buys use `quoteOrderQty`; market sells use a
 `LOT_SIZE`-rounded quantity. `NOTIONAL` and `MIN_NOTIONAL` filters are handled.
-Use `--tld us` for Binance.US and `--help` for all options.
+Set `tld = us` in `[binance]`, or pass `--tld us`, for Binance.US. Use `--help`
+for all options.
 
 ## Development
 

@@ -2,7 +2,10 @@ import execute_index_fund
 
 
 class FakeBinanceClient:
+    last_kwargs = None
+
     def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
         self.balance = [("USDT", 100.0)]
 
     def getBalanceUsd(self, cached=True, ignore_small_amounts=20):
@@ -99,3 +102,15 @@ def test_source_amount_must_match_source_portfolio(tmp_path, monkeypatch):
         assert "--source-amount" in str(error)
     else:
         raise AssertionError("mismatched source amounts must fail")
+
+
+def test_keys_file_can_select_the_binance_region(tmp_path, monkeypatch):
+    keys = tmp_path / "keys"
+    keys.write_text("[binance]\napi_key = key\nsecret_key = secret\ntld = us\n")
+    monkeypatch.setattr(execute_index_fund, "BinanceClient", FakeBinanceClient)
+
+    execute_index_fund.main([
+        "--reinvest", "--keys", str(keys), "--portfolio", "BTC"
+    ])
+
+    assert FakeBinanceClient.last_kwargs["tld"] == "us"
