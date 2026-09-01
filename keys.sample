@@ -2,6 +2,8 @@
 [binance]
 api_key = 
 secret_key = 
+# Binance domain suffix: com or us
+tld = com
 
 # Please fill the keys below
 [coinmarketcap]

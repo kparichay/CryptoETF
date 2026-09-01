@@ -59,7 +59,7 @@ def run(args: argparse.Namespace):
         BinanceClient(
             api_key=binance_keys.get("api_key", ""),
             secret_key=binance_keys.get("secret_key", ""),
-            tld=args.tld,
+            tld=args.tld or binance_keys.get("tld", "com"),
             testnet=args.testnet,
         )
     )
@@ -121,7 +121,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--keys", default="keys", help="INI credentials file; see keys.sample."
     )
     parser.add_argument(
-        "--tld", default="com", help="Binance domain suffix, for example 'us'."
+        "--tld",
+        help="Binance domain suffix, for example 'us'; overrides [binance] tld.",
     )
     parser.add_argument(
         "--testnet",
